@@ -1,0 +1,7 @@
+{
+  "startUrl": "https://example.com",
+  "siteType": "static",
+  "features": { "structure": true, "extract": true, "archive": true },
+  "extractors": [{ "name": "h1", "selector": "h1", "attr": "text" }],
+  "limits": { "maxPages": 3, "maxDepth": 1 }
+}
