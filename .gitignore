@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next
+.next/
+out/
+build/
+dist/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# crawlee / playwright
+storage/
+apify_storage/
+playwright-report/
+test-results/
+
+# job data (keep directory via .gitkeep)
+data/jobs/*
+!data/jobs/.gitkeep
+
+# env / logs
+.env
+.env*.local
+*.log
+npm-debug.log*
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# template (reference only)
+claude_Template-main/
