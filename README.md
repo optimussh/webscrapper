@@ -31,7 +31,7 @@ npx playwright install chromium
 npm run dev
 ```
 
-브라우저에서 http://localhost:3000 을 엽니다.
+브라우저에서 http://localhost:5900 을 엽니다.
 
 ## 사용 흐름
 

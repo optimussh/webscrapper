@@ -4,9 +4,9 @@
   "private": true,
   "description": "Site crawler with structure analysis, data extraction, and ZIP export",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 5900",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 5900",
     "crawl-job": "tsx src/crawler/run-job.ts",
     "smoke": "tsx scripts/smoke-test.ts",
     "typecheck": "tsc --noEmit",
