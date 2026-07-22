@@ -67,6 +67,26 @@ npx tsx scripts/smoke-unsin.ts
 > 샘플보기(카드 9장 고르기) 같은 **인터랙티브 UI**는 크롤 대상이 아닙니다.  
 > 상세 페이지에 이미 보이는 소개/태그/구성 텍스트는 HTML로 수집됩니다.
 
+### 결제 화면 캡처 (벤치마킹)
+
+체크박스 **「결제 화면 캡처」** 를 켜면, 수집된 상품 상세(`intro.php?cid=…`) **전부**에 대해:
+
+1. 상세 폼을 제출해 `buycash/result` 결제 UI에 진입  
+2. **결제 완료는 하지 않음** (카드 입력·결제하기 클릭 없음)  
+3. 저장 위치 (ZIP 포함):
+
+```
+payment/
+  payment.json      # 결제수단, CTA, 폼 필드, 유의사항
+  index.html        # 사람용 목록
+  html/*.pay.html
+  screenshots/*.pay.png
+```
+
+```bash
+npx tsx scripts/smoke-payment.ts
+```
+
 ## ZIP 구성
 
 ```

@@ -8,6 +8,7 @@ import type {
   JobMeta,
   JobSummary,
   PageStructure,
+  PaymentCapture,
   SitemapNode,
 } from "./types";
 
@@ -64,6 +65,7 @@ export async function createJob(input: CreateJobInput): Promise<JobMeta> {
     structure: input.features?.structure ?? true,
     extract: input.features?.extract ?? false,
     archive: input.features?.archive ?? true,
+    paymentCapture: input.features?.paymentCapture ?? false,
   };
 
   const meta: JobMeta = {
@@ -286,6 +288,7 @@ export async function loadJobArtifacts(jobId: string): Promise<{
   sitemap?: SitemapNode;
   extract?: ExtractedPage[];
   summary?: JobSummary;
+  payment?: PaymentCapture[];
 }> {
   const meta = await readJob(jobId);
   if (!meta) throw new Error("Job not found");
@@ -306,5 +309,6 @@ export async function loadJobArtifacts(jobId: string): Promise<{
     sitemap: await readOptional<SitemapNode>("sitemap.json"),
     extract: await readOptional<ExtractedPage[]>("extract.json"),
     summary: await readOptional<JobSummary>("summary.json"),
+    payment: await readOptional<PaymentCapture[]>("payment/payment.json"),
   };
 }

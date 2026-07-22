@@ -7,6 +7,7 @@ import type {
   JobMeta,
   JobSummary,
   PageStructure,
+  PaymentCapture,
   SitemapNode,
 } from "../../../lib/types";
 
@@ -16,6 +17,7 @@ type Artifacts = {
   sitemap?: SitemapNode;
   extract?: ExtractedPage[];
   summary?: JobSummary;
+  payment?: PaymentCapture[];
 };
 
 function renderTree(node: SitemapNode, prefix = ""): string {
@@ -246,6 +248,55 @@ export default function JobPage() {
                       <pre style={{ margin: 0, fontSize: 11, whiteSpace: "pre-wrap" }}>
                         {JSON.stringify(row.data, null, 2)}
                       </pre>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {data?.payment && data.payment.length > 0 && (
+        <>
+          <h2 className="section-title">
+            결제 화면 캡처 ({data.payment.filter((p) => p.ok).length}/
+            {data.payment.length} 성공)
+          </h2>
+          <p className="meta-line">
+            ZIP 안 <code>payment/index.html</code>, <code>payment/payment.json</code>,{" "}
+            <code>payment/screenshots/</code> 참고. 결제 완료는 하지 않습니다.
+          </p>
+          <div className="table-wrap card" style={{ padding: 0 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>상태</th>
+                  <th>상세 URL</th>
+                  <th>금액</th>
+                  <th>결제수단</th>
+                  <th>CTA</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.payment.map((row) => (
+                  <tr key={row.detailUrl}>
+                    <td>{row.ok ? "OK" : row.error || "FAIL"}</td>
+                    <td>
+                      <code style={{ fontSize: 11 }}>{row.detailUrl}</code>
+                      {row.paymentUrl && (
+                        <>
+                          <br />
+                          <code style={{ fontSize: 11 }}>{row.paymentUrl}</code>
+                        </>
+                      )}
+                    </td>
+                    <td>{row.amountHint || "—"}</td>
+                    <td style={{ fontSize: 12 }}>
+                      {(row.paymentMethods || []).join(", ") || "—"}
+                    </td>
+                    <td style={{ fontSize: 12 }}>
+                      {(row.ctaLabels || []).join(" / ") || "—"}
                     </td>
                   </tr>
                 ))}

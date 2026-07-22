@@ -4,6 +4,11 @@ export type FeatureFlags = {
   structure: boolean; // B
   extract: boolean; // C
   archive: boolean; // A
+  /**
+   * Capture payment UI (e.g. buycash/result) for every product detail URL.
+   * Stops before actual payment. Uses Playwright form POST.
+   */
+  paymentCapture?: boolean;
 };
 
 export type Extractor = {
@@ -112,4 +117,23 @@ export type JobSummary = {
   pagesCrawled: number;
   completedAt: string;
   durationMs: number;
+  paymentCaptured?: number;
+  paymentFailed?: number;
+};
+
+/** One payment-page benchmark capture (no payment completed). */
+export type PaymentCapture = {
+  detailUrl: string;
+  paymentUrl?: string;
+  ok: boolean;
+  error?: string;
+  productTitle?: string;
+  amountHint?: string;
+  paymentMethods: string[];
+  ctaLabels: string[];
+  formFields: { name: string; type: string; label?: string }[];
+  notices: string[];
+  htmlFile?: string;
+  screenshotFile?: string;
+  capturedAt: string;
 };

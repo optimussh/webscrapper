@@ -17,6 +17,7 @@ const UNSIN_PRESET = {
   structure: true,
   extract: true,
   archive: true,
+  paymentCapture: true,
   maxPages: 25,
   maxDepth: 2,
   scope: "site" as CrawlScope,
@@ -38,6 +39,7 @@ export default function HomePage() {
   const [structure, setStructure] = useState(true);
   const [extract, setExtract] = useState(true);
   const [archive, setArchive] = useState(true);
+  const [paymentCapture, setPaymentCapture] = useState(true);
   const [maxPages, setMaxPages] = useState(25);
   const [maxDepth, setMaxDepth] = useState(2);
   const [scope, setScope] = useState<CrawlScope>("site");
@@ -51,8 +53,11 @@ export default function HomePage() {
   const showListDetail = siteType === "list-detail";
 
   const canSubmit = useMemo(
-    () => startUrl.trim().length > 0 && (structure || extract || archive) && !busy,
-    [startUrl, structure, extract, archive, busy],
+    () =>
+      startUrl.trim().length > 0 &&
+      (structure || extract || archive || paymentCapture) &&
+      !busy,
+    [startUrl, structure, extract, archive, paymentCapture, busy],
   );
 
   function applyUnsinPreset() {
@@ -61,6 +66,7 @@ export default function HomePage() {
     setStructure(UNSIN_PRESET.structure);
     setExtract(UNSIN_PRESET.extract);
     setArchive(UNSIN_PRESET.archive);
+    setPaymentCapture(UNSIN_PRESET.paymentCapture);
     setMaxPages(UNSIN_PRESET.maxPages);
     setMaxDepth(UNSIN_PRESET.maxDepth);
     setScope(UNSIN_PRESET.scope);
@@ -92,7 +98,7 @@ export default function HomePage() {
         body: JSON.stringify({
           startUrl: startUrl.trim(),
           siteType,
-          features: { structure, extract, archive },
+          features: { structure, extract, archive, paymentCapture },
           extractors,
           limits: { maxPages, maxDepth },
           scope,
@@ -215,7 +221,22 @@ export default function HomePage() {
             />
             A. HTML 아카이브
           </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={paymentCapture}
+              onChange={(e) => setPaymentCapture(e.target.checked)}
+            />
+            결제 화면 캡처 (상세 URL 전체, 결제 실행 안 함)
+          </label>
         </div>
+        {paymentCapture && (
+          <p className="hint">
+            수집된 상품 상세(<code>intro.php?cid=…</code>)마다 결제 UI(
+            <code>buycash/result</code>)를 열어 HTML·스크린샷·결제수단/폼 구조를 저장합니다.
+            카드 결제 완료는 하지 않습니다. 상세가 많으면 시간이 꽤 걸립니다.
+          </p>
+        )}
 
         <div className="grid-2">
           <label className="field">

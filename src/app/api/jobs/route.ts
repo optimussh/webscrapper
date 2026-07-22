@@ -29,6 +29,7 @@ export async function POST(req: Request) {
         structure: body.features?.structure ?? true,
         extract: body.features?.extract ?? false,
         archive: body.features?.archive ?? true,
+        paymentCapture: body.features?.paymentCapture ?? false,
       },
       extractors: body.extractors,
       limits: body.limits,

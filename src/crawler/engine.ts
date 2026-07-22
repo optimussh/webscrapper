@@ -19,6 +19,10 @@ import {
 } from "../lib/jobs";
 import type { CrawlScope, ExtractedPage, JobMeta, PageStructure } from "../lib/types";
 import { isInScope, normalizeUrl, shouldSkipUrl } from "../lib/url";
+import {
+  capturePaymentForDetails,
+  isProductDetailUrl,
+} from "./payment-capture";
 
 type UserData = {
   depth: number;
@@ -129,6 +133,41 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     await savePages(jobId, pages);
     if (input.features.extract) await saveExtract(jobId, extracts);
 
+    let paymentOk = 0;
+    let paymentFail = 0;
+    if (input.features.paymentCapture) {
+      const detailUrls = pages.map((p) => p.url).filter(isProductDetailUrl);
+      // Also from extract rows (list cards may point to details not fully "seen" as pages)
+      for (const row of extracts) {
+        if (isProductDetailUrl(row.url)) detailUrls.push(row.url);
+      }
+      const uniqueDetails = [...new Set(detailUrls)];
+      await updateJob(jobId, {
+        progress: {
+          pagesCrawled: pages.length,
+          pagesEnqueued: seen.size,
+          message: `Payment UI capture 0/${uniqueDetails.length}`,
+        },
+      });
+
+      const paymentResults = await capturePaymentForDetails(
+        jobId,
+        uniqueDetails,
+        (done, total, url) => {
+          void updateJob(jobId, {
+            progress: {
+              pagesCrawled: pages.length,
+              pagesEnqueued: seen.size,
+              currentUrl: url,
+              message: `Payment UI capture ${done + 1}/${total}`,
+            },
+          });
+        },
+      );
+      paymentOk = paymentResults.filter((r) => r.ok).length;
+      paymentFail = paymentResults.filter((r) => !r.ok).length;
+    }
+
     await saveSummary(jobId, {
       id: jobId,
       startUrl,
@@ -137,6 +176,8 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       pagesCrawled: pages.length,
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - started,
+      paymentCaptured: paymentOk,
+      paymentFailed: paymentFail,
     });
 
     if (input.features.archive) {
@@ -166,7 +207,9 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       progress: {
         pagesCrawled: pages.length,
         pagesEnqueued: seen.size,
-        message: `Done — ${pages.length} pages`,
+        message: input.features.paymentCapture
+          ? `Done — ${pages.length} pages, payment UI ${paymentOk} ok / ${paymentFail} fail`
+          : `Done — ${pages.length} pages`,
       },
     });
   } catch (err) {
