@@ -19,6 +19,9 @@ export type JobLimits = {
   maxDepth: number;
 };
 
+/** origin = exact host; site = related subdomains (www + fortun.unsin.co.kr) */
+export type CrawlScope = "origin" | "site";
+
 export type CreateJobInput = {
   startUrl: string;
   siteType: SiteType;
@@ -29,6 +32,13 @@ export type CreateJobInput = {
   listLinkSelector?: string;
   /** Substring(s) that detail URLs should include */
   detailUrlIncludes?: string[];
+  /**
+   * When set, extractors run inside each matching card/row (list pages).
+   * Example for unsin.co.kr: ".free-cont"
+   */
+  listItemSelector?: string;
+  /** Default "site" so fortun.unsin.co.kr is reachable from www.unsin.co.kr */
+  scope?: CrawlScope;
 };
 
 export type JobStatus = "queued" | "running" | "completed" | "failed";
@@ -46,6 +56,8 @@ export type JobMeta = {
     limits: JobLimits;
     listLinkSelector?: string;
     detailUrlIncludes: string[];
+    listItemSelector?: string;
+    scope: CrawlScope;
   };
   progress: {
     pagesCrawled: number;
@@ -81,6 +93,8 @@ export type PageStructure = {
 
 export type ExtractedPage = {
   url: string;
+  /** Present when extracted from a list card */
+  itemIndex?: number;
   data: Record<string, string | string[] | null>;
 };
 

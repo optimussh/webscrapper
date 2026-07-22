@@ -57,6 +57,43 @@ export function sameOrigin(a: string, b: string): boolean {
   }
 }
 
+/**
+ * Rough registrable domain (eTLD+1). Handles common multi-part TLDs like co.kr.
+ * Example: www.unsin.co.kr and fortun.unsin.co.kr → unsin.co.kr
+ */
+export function registrableDomain(hostname: string): string {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length <= 2) return host;
+  const multi = new Set(["co", "com", "ne", "or", "go", "ac", "re", "pe", "ge"]);
+  if (parts.length >= 3 && multi.has(parts[parts.length - 2])) {
+    return parts.slice(-3).join(".");
+  }
+  return parts.slice(-2).join(".");
+}
+
+/** Same site = same registrable domain (allows related subdomains). */
+export function sameSite(a: string, b: string): boolean {
+  try {
+    return registrableDomain(new URL(a).hostname) === registrableDomain(new URL(b).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Link allowed under crawl scope.
+ * - origin: exact origin only
+ * - site: related subdomains (default for list-detail / real shopping sites)
+ */
+export function isInScope(
+  startUrl: string,
+  targetUrl: string,
+  scope: "origin" | "site" = "site",
+): boolean {
+  return scope === "origin" ? sameOrigin(startUrl, targetUrl) : sameSite(startUrl, targetUrl);
+}
+
 export function shouldSkipUrl(url: string): boolean {
   try {
     const u = new URL(url);

@@ -79,6 +79,9 @@ export async function createJob(input: CreateJobInput): Promise<JobMeta> {
       limits: clampLimits(input.limits),
       listLinkSelector: input.listLinkSelector,
       detailUrlIncludes: input.detailUrlIncludes ?? [],
+      listItemSelector: input.listItemSelector,
+      // Default site-scope so related subdomains (www → fortun) are crawlable
+      scope: input.scope ?? "site",
     },
     progress: {
       pagesCrawled: 0,

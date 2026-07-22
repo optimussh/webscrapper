@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
-import type { Extractor, PageLink, PageStructure } from "./types";
-import { normalizeUrl, sameOrigin } from "./url";
+import type { CrawlScope, Extractor, PageLink, PageStructure } from "./types";
+import { isInScope, normalizeUrl, sameOrigin, shouldSkipUrl } from "./url";
 
 function cleanText(s: string): string {
   return s.replace(/\s+/g, " ").trim();
@@ -101,44 +101,76 @@ export function analyzeHtml(
   };
 }
 
+function valueFromNode(
+  $: cheerio.CheerioAPI,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  el: any,
+  attr: string,
+  pageUrl: string,
+): string | undefined {
+  if (attr === "text") return cleanText($(el).text());
+  if (attr === "html") return $(el).html() ?? "";
+  const raw = $(el).attr(attr);
+  if (raw && (attr === "href" || attr === "src")) {
+    return normalizeUrl(raw, pageUrl) || raw;
+  }
+  return raw?.trim();
+}
+
+function extractWithScope(
+  $: cheerio.CheerioAPI,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  scope: cheerio.Cheerio<any>,
+  pageUrl: string,
+  extractors: Extractor[],
+): Record<string, string | string[] | null> {
+  const data: Record<string, string | string[] | null> = {};
+  for (const ex of extractors) {
+    if (!ex.name || !ex.selector) continue;
+    const nodes = scope.find(ex.selector);
+    if (!nodes.length) {
+      data[ex.name] = ex.multiple ? [] : null;
+      continue;
+    }
+    const attr = ex.attr || "text";
+    const values: string[] = [];
+    nodes.each((_, el) => {
+      const v = valueFromNode($, el, attr, pageUrl);
+      if (v) values.push(v);
+    });
+    if (ex.multiple) data[ex.name] = values;
+    else data[ex.name] = values[0] ?? null;
+  }
+  return data;
+}
+
 export function extractFromHtml(
   html: string,
   pageUrl: string,
   extractors: Extractor[],
 ): Record<string, string | string[] | null> {
   const $ = cheerio.load(html);
-  const data: Record<string, string | string[] | null> = {};
+  return extractWithScope($, $.root(), pageUrl, extractors);
+}
 
-  for (const ex of extractors) {
-    if (!ex.name || !ex.selector) continue;
-    const nodes = $(ex.selector);
-    if (!nodes.length) {
-      data[ex.name] = ex.multiple ? [] : null;
-      continue;
-    }
-
-    const attr = ex.attr || "text";
-    const values: string[] = [];
-    nodes.each((_, el) => {
-      let v: string | undefined;
-      if (attr === "text") v = cleanText($(el).text());
-      else if (attr === "html") v = $(el).html() ?? "";
-      else {
-        const raw = $(el).attr(attr);
-        if (raw && (attr === "href" || attr === "src")) {
-          v = normalizeUrl(raw, pageUrl) || raw;
-        } else {
-          v = raw?.trim();
-        }
-      }
-      if (v) values.push(v);
-    });
-
-    if (ex.multiple) data[ex.name] = values;
-    else data[ex.name] = values[0] ?? null;
-  }
-
-  return data;
+/** Extract one row per list card (e.g. .free-cont on unsin list pages). */
+export function extractListItems(
+  html: string,
+  pageUrl: string,
+  listItemSelector: string,
+  extractors: Extractor[],
+): import("./types").ExtractedPage[] {
+  const $ = cheerio.load(html);
+  const rows: import("./types").ExtractedPage[] = [];
+  $(listItemSelector).each((index, el) => {
+    const data = extractWithScope($, $(el), pageUrl, extractors);
+    const link =
+      (typeof data.url === "string" && data.url) ||
+      normalizeUrl($(el).find("a[href]").first().attr("href") || "", pageUrl) ||
+      pageUrl;
+    rows.push({ url: link, itemIndex: index, data });
+  });
+  return rows;
 }
 
 export function buildSitemap(
@@ -193,60 +225,105 @@ function pathSegs(url: string): number {
   }
 }
 
-/** Collect same-origin hrefs from HTML for enqueueing */
-export function discoverLinks(html: string, pageUrl: string): string[] {
+/** Collect in-scope hrefs from HTML for enqueueing */
+export function discoverLinks(
+  html: string,
+  pageUrl: string,
+  startUrl?: string,
+  scope: CrawlScope = "site",
+): string[] {
   const $ = cheerio.load(html);
   const out: string[] = [];
   const seen = new Set<string>();
+  const root = startUrl || pageUrl;
   $("a[href]").each((_, el) => {
     const abs = normalizeUrl($(el).attr("href") || "", pageUrl);
     if (!abs || seen.has(abs)) return;
-    if (!sameOrigin(pageUrl, abs)) return;
+    if (!isInScope(root, abs, scope)) return;
     seen.add(abs);
     out.push(abs);
   });
   return out;
 }
 
+/**
+ * Discover list + detail links for multi-level catalog sites.
+ * Handles cross-subdomain details (www.unsin.co.kr → fortun.unsin.co.kr).
+ */
 export function discoverListDetailLinks(
   html: string,
   pageUrl: string,
   listLinkSelector?: string,
   detailUrlIncludes?: string[],
+  startUrl?: string,
+  scope: CrawlScope = "site",
 ): string[] {
   const $ = cheerio.load(html);
   const seen = new Set<string>();
   const out: string[] = [];
+  const root = startUrl || pageUrl;
+  const detailPatterns =
+    detailUrlIncludes?.length
+      ? detailUrlIncludes
+      : ["intro.php?cid=", "/intro.php", "fortun."];
 
   const push = (href: string | undefined) => {
     const abs = normalizeUrl(href || "", pageUrl);
-    if (!abs || seen.has(abs) || !sameOrigin(pageUrl, abs)) return;
-    if (detailUrlIncludes?.length) {
-      const ok = detailUrlIncludes.some((s) => abs.includes(s));
-      if (!ok) return;
-    }
+    if (!abs || seen.has(abs)) return;
+    if (!isInScope(root, abs, scope)) return;
+    if (shouldSkipUrl(abs)) return;
     seen.add(abs);
     out.push(abs);
   };
 
+  const isDetail = (abs: string) => detailPatterns.some((s) => abs.includes(s));
+
+  // 1) Explicit list card selector (e.g. .free-cont a) — prefer these
   if (listLinkSelector) {
     $(listLinkSelector).each((_, el) => {
-      const tag = (el as { tagName?: string }).tagName?.toLowerCase?.();
-      if (tag === "a") push($(el).attr("href"));
-      else push($(el).find("a[href]").first().attr("href"));
+      const tag = String((el as { tagName?: string }).tagName || "").toLowerCase();
+      const href =
+        tag === "a"
+          ? $(el).attr("href")
+          : $(el).find("a[href]").first().attr("href");
+      const abs = normalizeUrl(href || "", pageUrl);
+      if (!abs) return;
+      // If user set detail patterns, keep only matching product links from cards
+      if (detailUrlIncludes?.length && !isDetail(abs)) return;
+      push(href);
     });
   }
 
-  // Heuristic: main content anchors, cards, list items
+  // 2) Common product-card patterns (unsin .free-cont)
+  $(".free-cont a[href], .img-Box a[href]").each((_, el) => {
+    const href = $(el).attr("href");
+    const abs = normalizeUrl(href || "", pageUrl);
+    if (!abs) return;
+    if (detailUrlIncludes?.length && !isDetail(abs) && !abs.includes("/unse/free/")) {
+      // still allow free fortune same-origin forms
+    }
+    push(href);
+  });
+
+  // 3) Auto detail URLs (always)
+  $("a[href*='intro.php'], a[href*='cid=']").each((_, el) => push($(el).attr("href")));
+
+  // 4) Category / list / tab pages (home → menu depth)
+  $(
+    "a[href*='submain/result'], a[href*='ca2='], a[href*='ca1='], .tablist a[href]",
+  ).each((_, el) => push($(el).attr("href")));
+
+  // 5) Fallback
   if (!out.length) {
     $(
-      "main a[href], article a[href], .product a[href], .card a[href], li a[href], table a[href]",
+      "main a[href], article a[href], .product a[href], .card a[href], li a[href]",
     ).each((_, el) => push($(el).attr("href")));
   }
 
   if (!out.length) {
-    return discoverLinks(html, pageUrl);
+    return discoverLinks(html, pageUrl, root, scope);
   }
 
-  return out;
+  // Prefer detail links first in queue order (stable unique already)
+  return out.sort((a, b) => Number(isDetail(b)) - Number(isDetail(a)));
 }

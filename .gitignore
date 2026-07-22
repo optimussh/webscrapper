@@ -36,3 +36,6 @@ Thumbs.db
 
 # template (reference only)
 claude_Template-main/
+
+data/inspect/
+

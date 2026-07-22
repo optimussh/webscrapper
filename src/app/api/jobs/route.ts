@@ -34,6 +34,8 @@ export async function POST(req: Request) {
       limits: body.limits,
       listLinkSelector: body.listLinkSelector,
       detailUrlIncludes: body.detailUrlIncludes,
+      listItemSelector: body.listItemSelector,
+      scope: body.scope ?? "site",
     });
 
     spawnCrawlJob(job.id);

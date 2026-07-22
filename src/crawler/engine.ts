@@ -5,6 +5,7 @@ import {
   discoverLinks,
   discoverListDetailLinks,
   extractFromHtml,
+  extractListItems,
 } from "../lib/analyze";
 import {
   readJob,
@@ -15,8 +16,8 @@ import {
   saveSummary,
   updateJob,
 } from "../lib/jobs";
-import type { ExtractedPage, JobMeta, PageStructure } from "../lib/types";
-import { normalizeUrl, pathDepth, shouldSkipUrl, sameOrigin } from "../lib/url";
+import type { CrawlScope, ExtractedPage, JobMeta, PageStructure } from "../lib/types";
+import { isInScope, normalizeUrl, shouldSkipUrl } from "../lib/url";
 
 type UserData = {
   depth: number;
@@ -24,11 +25,14 @@ type UserData = {
 };
 
 function crawleeConfig() {
-  // Avoid writing Apify-style storage into the repo root when possible
   return new Configuration({
     persistStorage: false,
     purgeOnStart: true,
   });
+}
+
+function scopeOf(meta: JobMeta): CrawlScope {
+  return meta.input.scope ?? "site";
 }
 
 export async function runCrawlJob(jobId: string): Promise<void> {
@@ -48,6 +52,7 @@ export async function runCrawlJob(jobId: string): Promise<void> {
   const startUrl = normalizeUrl(input.startUrl) || input.startUrl;
   const maxPages = input.limits.maxPages;
   const maxDepth = input.limits.maxDepth;
+  const scope = scopeOf(meta);
 
   const recordPage = async (
     url: string,
@@ -56,24 +61,42 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     extra?: { statusCode?: number; contentType?: string; finalUrl?: string },
   ) => {
     if (pages.length >= maxPages) return;
-    if (seen.has(url)) return;
-    seen.add(url);
+    // Normalize key so trailing-slash variants don't double-count
+    const key = normalizeUrl(url) || url;
+    if (seen.has(key)) return;
+    seen.add(key);
 
-    if (input.features.structure || true) {
-      pages.push(
-        analyzeHtml(html, url, depth, {
-          statusCode: extra?.statusCode,
-          contentType: extra?.contentType,
-          finalUrl: extra?.finalUrl,
-        }),
-      );
-    }
+    pages.push(
+      analyzeHtml(html, url, depth, {
+        statusCode: extra?.statusCode,
+        contentType: extra?.contentType,
+        finalUrl: extra?.finalUrl,
+      }),
+    );
 
     if (input.features.extract && input.extractors.length) {
-      extracts.push({
-        url,
-        data: extractFromHtml(html, url, input.extractors),
-      });
+      if (input.listItemSelector) {
+        const rows = extractListItems(
+          html,
+          url,
+          input.listItemSelector,
+          input.extractors,
+        );
+        if (rows.length) {
+          extracts.push(...rows);
+        } else {
+          // Detail pages often have no list cards — fall back to page-level extract
+          extracts.push({
+            url,
+            data: extractFromHtml(html, url, input.extractors),
+          });
+        }
+      } else {
+        extracts.push({
+          url,
+          data: extractFromHtml(html, url, input.extractors),
+        });
+      }
     }
 
     if (input.features.archive) {
@@ -89,16 +112,15 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       },
     });
 
-    // Incremental save for UI polling
     await savePages(jobId, pages);
     if (input.features.extract) await saveExtract(jobId, extracts);
   };
 
   try {
     if (input.siteType === "static") {
-      await runCheerioCrawl(meta, startUrl, maxPages, maxDepth, recordPage, pages);
+      await runCheerioCrawl(meta, startUrl, maxPages, maxDepth, scope, recordPage, pages);
     } else {
-      await runPlaywrightCrawl(meta, startUrl, maxPages, maxDepth, recordPage, pages);
+      await runPlaywrightCrawl(meta, startUrl, maxPages, maxDepth, scope, recordPage, pages);
     }
 
     const sitemap = buildSitemap(pages, startUrl);
@@ -135,7 +157,6 @@ export async function runCrawlJob(jobId: string): Promise<void> {
         message: `Failed: ${message}`,
       },
     });
-    // Still persist whatever we got
     if (pages.length) {
       await savePages(jobId, pages);
       await saveSitemap(jobId, buildSitemap(pages, startUrl));
@@ -144,11 +165,34 @@ export async function runCrawlJob(jobId: string): Promise<void> {
   }
 }
 
+function collectEnqueueUrls(
+  meta: JobMeta,
+  html: string,
+  pageUrl: string,
+  startUrl: string,
+  scope: CrawlScope,
+  depth: number,
+): string[] {
+  const isListDetail = meta.input.siteType === "list-detail";
+  if (isListDetail) {
+    return discoverListDetailLinks(
+      html,
+      pageUrl,
+      meta.input.listLinkSelector,
+      meta.input.detailUrlIncludes,
+      startUrl,
+      scope,
+    );
+  }
+  return discoverLinks(html, pageUrl, startUrl, scope);
+}
+
 async function runCheerioCrawl(
   meta: JobMeta,
   startUrl: string,
   maxPages: number,
   maxDepth: number,
+  scope: CrawlScope,
   recordPage: (
     url: string,
     html: string,
@@ -170,12 +214,12 @@ async function runCheerioCrawl(
       maxRequestsPerCrawl: maxPages,
       maxConcurrency: 5,
       requestHandlerTimeoutSecs: 60,
-      async requestHandler({ request, body, response, enqueueLinks }) {
+      async requestHandler({ request, body, response }) {
         const depth = (request.userData as UserData).depth ?? 0;
         const html = typeof body === "string" ? body : body.toString("utf8");
         const url = request.loadedUrl || request.url;
 
-        if (!sameOrigin(startUrl, url)) return;
+        if (!isInScope(startUrl, url, scope)) return;
         if (shouldSkipUrl(url)) return;
 
         await recordPage(url, html, depth, {
@@ -186,30 +230,18 @@ async function runCheerioCrawl(
 
         if (depth >= maxDepth || pages.length >= maxPages) return;
 
-        const links =
-          meta.input.siteType === "list-detail"
-            ? discoverListDetailLinks(
-                html,
-                url,
-                meta.input.listLinkSelector,
-                meta.input.detailUrlIncludes,
-              )
-            : discoverLinks(html, url);
+        const links = collectEnqueueUrls(meta, html, url, startUrl, scope, depth)
+          .filter((href) => isInScope(startUrl, href, scope) && !shouldSkipUrl(href))
+          .slice(0, 120);
 
-        const toEnqueue = links
-          .filter((href) => sameOrigin(startUrl, href) && !shouldSkipUrl(href))
-          .slice(0, 100)
-          .map((href) => ({
-            url: href,
-            userData: { depth: depth + 1 } satisfies UserData,
-          }));
-
-        if (toEnqueue.length) {
-          await enqueueLinks({
-            urls: toEnqueue.map((t) => t.url),
-            userData: { depth: depth + 1 },
-            strategy: "same-origin",
-          });
+        for (const href of links) {
+          await requestQueue.addRequest(
+            {
+              url: href,
+              userData: { depth: depth + 1 } satisfies UserData,
+            },
+            { forefront: false },
+          );
         }
       },
       async failedRequestHandler({ request }, error) {
@@ -227,6 +259,7 @@ async function runPlaywrightCrawl(
   startUrl: string,
   maxPages: number,
   maxDepth: number,
+  scope: CrawlScope,
   recordPage: (
     url: string,
     html: string,
@@ -242,8 +275,6 @@ async function runPlaywrightCrawl(
     userData: { depth: 0 } satisfies UserData,
   });
 
-  const isListDetail = meta.input.siteType === "list-detail";
-
   const crawler = new PlaywrightCrawler(
     {
       requestQueue,
@@ -256,22 +287,23 @@ async function runPlaywrightCrawl(
           headless: true,
         },
       },
-      async requestHandler({ request, page, enqueueLinks }) {
+      async requestHandler({ request, page }) {
         const depth = (request.userData as UserData).depth ?? 0;
         const url = request.loadedUrl || request.url;
-        if (!sameOrigin(startUrl, url)) return;
+        if (!isInScope(startUrl, url, scope)) return;
         if (shouldSkipUrl(url)) return;
 
-        // SPA: wait for network to settle a bit
         try {
           await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-          await page.waitForTimeout(500);
+          await page.waitForTimeout(800);
         } catch {
-          /* continue with whatever we have */
+          /* continue */
         }
 
         const html = await page.content();
         const finalUrl = page.url();
+
+        if (!isInScope(startUrl, finalUrl, scope)) return;
 
         await recordPage(finalUrl || url, html, depth, {
           statusCode: 200,
@@ -281,36 +313,28 @@ async function runPlaywrightCrawl(
 
         if (depth >= maxDepth || pages.length >= maxPages) return;
 
-        let urls: string[];
-        if (isListDetail && depth === 0) {
-          urls = discoverListDetailLinks(
-            html,
-            finalUrl || url,
-            meta.input.listLinkSelector,
-            meta.input.detailUrlIncludes,
-          );
-        } else if (isListDetail) {
-          // From detail pages, still discover shallow same-origin links sparingly
-          urls = discoverLinks(html, finalUrl || url).filter(
-            (u) => pathDepth(u) <= pathDepth(startUrl) + maxDepth,
-          );
-        } else {
-          urls = discoverLinks(html, finalUrl || url);
-        }
+        const links = collectEnqueueUrls(
+          meta,
+          html,
+          finalUrl || url,
+          startUrl,
+          scope,
+          depth,
+        )
+          .filter((href) => isInScope(startUrl, href, scope) && !shouldSkipUrl(href))
+          .slice(0, 100);
 
-        const filtered = urls
-          .filter((href) => sameOrigin(startUrl, href) && !shouldSkipUrl(href))
-          .slice(0, 80);
-
-        if (filtered.length) {
-          await enqueueLinks({
-            urls: filtered,
-            userData: {
-              depth: depth + 1,
-              isDetail: isListDetail && depth === 0,
-            } satisfies UserData,
-            strategy: "same-origin",
-          });
+        for (const href of links) {
+          await requestQueue.addRequest(
+            {
+              url: href,
+              userData: {
+                depth: depth + 1,
+                isDetail: /intro\.php|cid=/.test(href),
+              } satisfies UserData,
+            },
+            { forefront: /intro\.php|cid=/.test(href) },
+          );
         }
       },
       async failedRequestHandler({ request }, error) {
