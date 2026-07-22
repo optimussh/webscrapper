@@ -9,6 +9,7 @@ import {
 } from "../lib/analyze";
 import {
   readJob,
+  saveArchiveIndex,
   saveExtract,
   saveHtml,
   savePages,
@@ -137,6 +138,28 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - started,
     });
+
+    if (input.features.archive) {
+      const byUrl = new Map(
+        extracts.map((e) => [
+          e.url,
+          {
+            title:
+              (typeof e.data.title === "string" && e.data.title) || undefined,
+            price:
+              (typeof e.data.price === "string" && e.data.price) || undefined,
+          },
+        ]),
+      );
+      await saveArchiveIndex(
+        jobId,
+        pages.map((p) => ({
+          url: p.url,
+          title: byUrl.get(p.url)?.title || p.title,
+          price: byUrl.get(p.url)?.price,
+        })),
+      );
+    }
 
     await updateJob(jobId, {
       status: "completed",
