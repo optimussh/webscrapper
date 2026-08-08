@@ -45,7 +45,20 @@ npx playwright install chromium
 npm run dev
 ```
 
-브라우저에서 http://localhost:5900 을 엽니다.
+브라우저에서 **http://localhost:5900** 을 엽니다.
+
+### 작업 후 확인 (배포 정책)
+
+이 앱은 **로컬 도구**입니다 (파일시스템 job 저장 · Playwright · 장시간 크롤).  
+Vercel 같은 서버리스에는 그대로 올리지 않습니다.
+
+| 단계 | 내용 |
+|------|------|
+| 1 | `git commit` + `git push` → https://github.com/optimussh/webscrapper |
+| 2 | `npm run dev` → **http://localhost:5900** (확인용 “배포”) |
+| 3 | 네트워크 접근: http://192.168.x.x:5900 (같은 LAN) |
+
+서버가 꺼져 있으면 브라우저에 **Failed to load page** / 연결 거부가 납니다. 코드 오류가 아니라 **dev 서버 미기동**인 경우가 많습니다.
 
 ## 사용 흐름
 

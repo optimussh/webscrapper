@@ -2,6 +2,12 @@
 
 ## 2026-08-09
 
+### Verify / “deploy”
+
+- Confirmed: no Vercel project; push-only was incomplete for user check.
+- `npm run build` OK; started `npm run dev` on **http://localhost:5900** (home 200, POST /api/jobs 201).
+- Policy for this repo: push GitHub + leave local :5900 running (not serverless).
+
 ### OSS feature-bench (no vendor swap)
 
 - Strategy: keep **Crawlee**; absorb Firecrawl / Scrapling / Browser Use **ideas** as work-mode flags.
