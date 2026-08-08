@@ -1,4 +1,5 @@
 import { CheerioCrawler, Configuration, PlaywrightCrawler, RequestQueue } from "crawlee";
+import { chromium } from "playwright";
 import {
   analyzeHtml,
   buildSitemap,
@@ -10,13 +11,21 @@ import {
 import {
   readJob,
   saveArchiveIndex,
+  saveBenchmarkRecipe,
   saveExtract,
   saveHtml,
+  saveMarkdown,
+  saveMarkdownIndex,
   savePages,
+  saveScreenshot,
+  saveScreenshotIndex,
   saveSitemap,
   saveSummary,
   updateJob,
 } from "../lib/jobs";
+import { htmlToMarkdown } from "../lib/markdown";
+import { mergeExtractors } from "../lib/smart-extract";
+import { fetchSitemapSeedUrls } from "../lib/sitemap-seed";
 import type { CrawlScope, ExtractedPage, JobMeta, PageStructure } from "../lib/types";
 import { isInScope, normalizeUrl, shouldSkipUrl } from "../lib/url";
 import {
@@ -40,6 +49,23 @@ function scopeOf(meta: JobMeta): CrawlScope {
   return meta.input.scope ?? "site";
 }
 
+function concurrencyOf(meta: JobMeta, fallback: number): number {
+  if (meta.input.features.polite) {
+    return meta.input.limits.maxConcurrency ?? 1;
+  }
+  return fallback;
+}
+
+function delayMsOf(meta: JobMeta): number {
+  if (!meta.input.features.polite) return 0;
+  return meta.input.limits.requestDelayMs ?? 800;
+}
+
+async function politePause(meta: JobMeta): Promise<void> {
+  const ms = delayMsOf(meta);
+  if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+}
+
 export async function runCrawlJob(jobId: string): Promise<void> {
   const meta = await readJob(jobId);
   if (!meta) throw new Error(`Job not found: ${jobId}`);
@@ -50,56 +76,90 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     progress: { message: "Starting crawl", pagesCrawled: 0, pagesEnqueued: 1 },
   });
 
+  // Always save reproducible plan (thin "recipe" — Browser Use idea without LLM)
+  await saveBenchmarkRecipe(jobId, meta.input);
+
   const pages: PageStructure[] = [];
   const extracts: ExtractedPage[] = [];
+  const mdEntries: { url: string; title?: string; file: string }[] = [];
+  const shotEntries: { url: string; title?: string; file: string }[] = [];
   const seen = new Set<string>();
   const { input } = meta;
   const startUrl = normalizeUrl(input.startUrl) || input.startUrl;
   const maxPages = input.limits.maxPages;
   const maxDepth = input.limits.maxDepth;
   const scope = scopeOf(meta);
+  const extractors = mergeExtractors(input.extractors, !!input.features.smartExtract);
+  const doExtract = !!(input.features.extract || input.features.smartExtract) && extractors.length > 0;
+  let sitemapSeedCount = 0;
 
   const recordPage = async (
     url: string,
     html: string,
     depth: number,
-    extra?: { statusCode?: number; contentType?: string; finalUrl?: string },
+    extra?: {
+      statusCode?: number;
+      contentType?: string;
+      finalUrl?: string;
+      screenshotPng?: Buffer;
+    },
   ) => {
     if (pages.length >= maxPages) return;
-    // Normalize key so trailing-slash variants don't double-count
     const key = normalizeUrl(url) || url;
     if (seen.has(key)) return;
     seen.add(key);
 
-    pages.push(
-      analyzeHtml(html, url, depth, {
-        statusCode: extra?.statusCode,
-        contentType: extra?.contentType,
-        finalUrl: extra?.finalUrl,
-      }),
-    );
+    const structure = analyzeHtml(html, url, depth, {
+      statusCode: extra?.statusCode,
+      contentType: extra?.contentType,
+      finalUrl: extra?.finalUrl,
+    });
 
-    if (input.features.extract && input.extractors.length) {
+    if (input.features.markdown) {
+      try {
+        const md = htmlToMarkdown(html, url);
+        const file = await saveMarkdown(jobId, url, md);
+        structure.markdownFile = file;
+        mdEntries.push({ url, title: structure.title, file });
+      } catch (err) {
+        console.error("markdown failed", url, err);
+      }
+    }
+
+    if (input.features.screenshot && extra?.screenshotPng) {
+      try {
+        const file = await saveScreenshot(jobId, url, extra.screenshotPng);
+        structure.screenshotFile = file;
+        shotEntries.push({ url, title: structure.title, file });
+      } catch (err) {
+        console.error("screenshot save failed", url, err);
+      }
+    }
+
+    pages.push(structure);
+
+    if (doExtract) {
       if (input.listItemSelector) {
-        const rows = extractListItems(
-          html,
-          url,
-          input.listItemSelector,
-          input.extractors,
-        );
+        const rows = extractListItems(html, url, input.listItemSelector, extractors);
         if (rows.length) {
-          extracts.push(...rows);
+          extracts.push(
+            ...rows.map((r) => ({
+              ...r,
+              smart: !!input.features.smartExtract && !input.extractors?.length,
+            })),
+          );
         } else {
-          // Detail pages often have no list cards — fall back to page-level extract
           extracts.push({
             url,
-            data: extractFromHtml(html, url, input.extractors),
+            data: extractFromHtml(html, url, extractors),
+            smart: !!input.features.smartExtract,
           });
         }
       } else {
         extracts.push({
           url,
-          data: extractFromHtml(html, url, input.extractors),
+          data: extractFromHtml(html, url, extractors),
+          smart: !!input.features.smartExtract,
         });
       }
     }
@@ -118,7 +178,7 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     });
 
     await savePages(jobId, pages);
-    if (input.features.extract) await saveExtract(jobId, extracts);
+    if (doExtract) await saveExtract(jobId, extracts);
   };
 
   try {
@@ -128,16 +188,40 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       await runPlaywrightCrawl(meta, startUrl, maxPages, maxDepth, scope, recordPage, pages);
     }
 
+    // Static crawls cannot screenshot in-handler — second pass with Playwright
+    if (input.features.screenshot && input.siteType === "static" && pages.length) {
+      await updateJob(jobId, {
+        progress: {
+          pagesCrawled: pages.length,
+          pagesEnqueued: seen.size,
+          message: `Screenshots 0/${pages.length}`,
+        },
+      });
+      await screenshotUrls(jobId, pages, (done, total, url) => {
+        void updateJob(jobId, {
+          progress: {
+            pagesCrawled: pages.length,
+            pagesEnqueued: seen.size,
+            currentUrl: url,
+            message: `Screenshots ${done}/${total}`,
+          },
+        });
+      }, shotEntries);
+      await savePages(jobId, pages);
+    }
+
     const sitemap = buildSitemap(pages, startUrl);
     await saveSitemap(jobId, sitemap);
     await savePages(jobId, pages);
-    if (input.features.extract) await saveExtract(jobId, extracts);
+    if (doExtract) await saveExtract(jobId, extracts);
+
+    if (mdEntries.length) await saveMarkdownIndex(jobId, mdEntries);
+    if (shotEntries.length) await saveScreenshotIndex(jobId, shotEntries);
 
     let paymentOk = 0;
     let paymentFail = 0;
     if (input.features.paymentCapture) {
       const detailUrls = pages.map((p) => p.url).filter(isProductDetailUrl);
-      // Also from extract rows (list cards may point to details not fully "seen" as pages)
       for (const row of extracts) {
         if (isProductDetailUrl(row.url)) detailUrls.push(row.url);
       }
@@ -168,6 +252,10 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       paymentFail = paymentResults.filter((r) => !r.ok).length;
     }
 
+    // Re-read meta for sitemap seed count stored during crawl via progress message only —
+    // keep count on a local var set by seed helper
+    sitemapSeedCount = (meta as JobMeta & { _seedCount?: number })._seedCount ?? 0;
+
     await saveSummary(jobId, {
       id: jobId,
       startUrl,
@@ -178,6 +266,9 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       durationMs: Date.now() - started,
       paymentCaptured: paymentOk,
       paymentFailed: paymentFail,
+      markdownCount: mdEntries.length,
+      screenshotCount: shotEntries.length,
+      sitemapSeedCount,
     });
 
     if (input.features.archive) {
@@ -202,14 +293,19 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       );
     }
 
+    const extras: string[] = [];
+    if (mdEntries.length) extras.push(`md ${mdEntries.length}`);
+    if (shotEntries.length) extras.push(`shots ${shotEntries.length}`);
+    if (input.features.paymentCapture) {
+      extras.push(`payment ${paymentOk}/${paymentFail}`);
+    }
+
     await updateJob(jobId, {
       status: "completed",
       progress: {
         pagesCrawled: pages.length,
         pagesEnqueued: seen.size,
-        message: input.features.paymentCapture
-          ? `Done — ${pages.length} pages, payment UI ${paymentOk} ok / ${paymentFail} fail`
-          : `Done — ${pages.length} pages`,
+        message: `Done — ${pages.length} pages${extras.length ? ` (${extras.join(", ")})` : ""}`,
       },
     });
   } catch (err) {
@@ -231,13 +327,48 @@ export async function runCrawlJob(jobId: string): Promise<void> {
   }
 }
 
+async function screenshotUrls(
+  jobId: string,
+  pages: PageStructure[],
+  onProgress: (done: number, total: number, url: string) => void,
+  shotEntries: { url: string; title?: string; file: string }[],
+): Promise<void> {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+    });
+    let done = 0;
+    for (const p of pages) {
+      onProgress(done, pages.length, p.url);
+      try {
+        const page = await context.newPage();
+        await page.goto(p.url, { waitUntil: "domcontentloaded", timeout: 45000 });
+        await page.waitForTimeout(500);
+        const png = await page.screenshot({ fullPage: true, type: "png" });
+        const file = await saveScreenshot(jobId, p.url, png);
+        p.screenshotFile = file;
+        shotEntries.push({ url: p.url, title: p.title, file });
+        await page.close();
+      } catch (err) {
+        console.error("screenshot pass failed", p.url, err);
+      }
+      done += 1;
+      onProgress(done, pages.length, p.url);
+    }
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+}
+
 function collectEnqueueUrls(
   meta: JobMeta,
   html: string,
   pageUrl: string,
   startUrl: string,
   scope: CrawlScope,
-  depth: number,
+  _depth: number,
 ): string[] {
   const isListDetail = meta.input.siteType === "list-detail";
   if (isListDetail) {
@@ -253,6 +384,46 @@ function collectEnqueueUrls(
   return discoverLinks(html, pageUrl, startUrl, scope);
 }
 
+async function seedQueue(
+  meta: JobMeta,
+  requestQueue: RequestQueue,
+  startUrl: string,
+  maxPages: number,
+  scope: CrawlScope,
+): Promise<number> {
+  await requestQueue.addRequest({
+    url: startUrl,
+    userData: { depth: 0 } satisfies UserData,
+  });
+
+  if (!meta.input.features.sitemapSeed) return 0;
+
+  await updateJob(meta.id, {
+    progress: {
+      pagesCrawled: 0,
+      pagesEnqueued: 1,
+      message: "Fetching sitemap.xml seeds…",
+    },
+  });
+
+  const seeds = await fetchSitemapSeedUrls(startUrl, scope, Math.min(maxPages, 80));
+  let added = 0;
+  for (const url of seeds) {
+    if (url === startUrl) continue;
+    await requestQueue.addRequest(
+      {
+        url,
+        userData: { depth: 0 } satisfies UserData,
+      },
+      { forefront: false },
+    );
+    added += 1;
+  }
+  // stash for summary
+  (meta as JobMeta & { _seedCount?: number })._seedCount = added;
+  return added;
+}
+
 async function runCheerioCrawl(
   meta: JobMeta,
   startUrl: string,
@@ -263,24 +434,36 @@ async function runCheerioCrawl(
     url: string,
     html: string,
     depth: number,
-    extra?: { statusCode?: number; contentType?: string; finalUrl?: string },
+    extra?: {
+      statusCode?: number;
+      contentType?: string;
+      finalUrl?: string;
+      screenshotPng?: Buffer;
+    },
   ) => Promise<void>,
   pages: PageStructure[],
 ) {
   const config = crawleeConfig();
   const requestQueue = await RequestQueue.open(`job-${meta.id}-q`, { config });
-  await requestQueue.addRequest({
-    url: startUrl,
-    userData: { depth: 0 } satisfies UserData,
-  });
+  const seedCount = await seedQueue(meta, requestQueue, startUrl, maxPages, scope);
+  if (seedCount) {
+    await updateJob(meta.id, {
+      progress: {
+        pagesCrawled: 0,
+        pagesEnqueued: seedCount + 1,
+        message: `Sitemap seeds +${seedCount}`,
+      },
+    });
+  }
 
   const crawler = new CheerioCrawler(
     {
       requestQueue,
       maxRequestsPerCrawl: maxPages,
-      maxConcurrency: 5,
+      maxConcurrency: concurrencyOf(meta, 5),
       requestHandlerTimeoutSecs: 60,
       async requestHandler({ request, body, response }) {
+        await politePause(meta);
         const depth = (request.userData as UserData).depth ?? 0;
         const html = typeof body === "string" ? body : body.toString("utf8");
         const url = request.loadedUrl || request.url;
@@ -330,22 +513,35 @@ async function runPlaywrightCrawl(
     url: string,
     html: string,
     depth: number,
-    extra?: { statusCode?: number; contentType?: string; finalUrl?: string },
+    extra?: {
+      statusCode?: number;
+      contentType?: string;
+      finalUrl?: string;
+      screenshotPng?: Buffer;
+    },
   ) => Promise<void>,
   pages: PageStructure[],
 ) {
   const config = crawleeConfig();
   const requestQueue = await RequestQueue.open(`job-${meta.id}-pw`, { config });
-  await requestQueue.addRequest({
-    url: startUrl,
-    userData: { depth: 0 } satisfies UserData,
-  });
+  const seedCount = await seedQueue(meta, requestQueue, startUrl, maxPages, scope);
+  if (seedCount) {
+    await updateJob(meta.id, {
+      progress: {
+        pagesCrawled: 0,
+        pagesEnqueued: seedCount + 1,
+        message: `Sitemap seeds +${seedCount}`,
+      },
+    });
+  }
+
+  const wantShot = !!meta.input.features.screenshot;
 
   const crawler = new PlaywrightCrawler(
     {
       requestQueue,
       maxRequestsPerCrawl: maxPages,
-      maxConcurrency: 2,
+      maxConcurrency: concurrencyOf(meta, 2),
       requestHandlerTimeoutSecs: 90,
       headless: true,
       launchContext: {
@@ -354,6 +550,7 @@ async function runPlaywrightCrawl(
         },
       },
       async requestHandler({ request, page }) {
+        await politePause(meta);
         const depth = (request.userData as UserData).depth ?? 0;
         const url = request.loadedUrl || request.url;
         if (!isInScope(startUrl, url, scope)) return;
@@ -361,7 +558,7 @@ async function runPlaywrightCrawl(
 
         try {
           await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-          await page.waitForTimeout(800);
+          await page.waitForTimeout(meta.input.features.polite ? 400 : 800);
         } catch {
           /* continue */
         }
@@ -371,10 +568,20 @@ async function runPlaywrightCrawl(
 
         if (!isInScope(startUrl, finalUrl, scope)) return;
 
+        let screenshotPng: Buffer | undefined;
+        if (wantShot) {
+          try {
+            screenshotPng = await page.screenshot({ fullPage: true, type: "png" });
+          } catch (err) {
+            console.error("inline screenshot failed", finalUrl, err);
+          }
+        }
+
         await recordPage(finalUrl || url, html, depth, {
           statusCode: 200,
           contentType: "text/html",
           finalUrl,
+          screenshotPng,
         });
 
         if (depth >= maxDepth || pages.length >= maxPages) return;

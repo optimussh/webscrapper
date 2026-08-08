@@ -11,6 +11,28 @@ type ExtractorRow = {
   multiple: boolean;
 };
 
+/** Generic reference-site pack (OSS capability absorption, no vendor APIs). */
+const BENCHMARK_PRESET = {
+  startUrl: "https://example.com",
+  siteType: "dynamic" as SiteType,
+  structure: true,
+  extract: false,
+  archive: true,
+  paymentCapture: false,
+  markdown: true,
+  screenshot: true,
+  polite: true,
+  sitemapSeed: true,
+  smartExtract: true,
+  maxPages: 30,
+  maxDepth: 2,
+  scope: "site" as CrawlScope,
+  listLinkSelector: "",
+  detailUrlIncludes: "",
+  listItemSelector: "",
+  extractorRows: [] as ExtractorRow[],
+};
+
 const UNSIN_PRESET = {
   startUrl: "https://www.unsin.co.kr/unse/fortun/submain/result?ca2=37",
   siteType: "list-detail" as SiteType,
@@ -18,6 +40,11 @@ const UNSIN_PRESET = {
   extract: true,
   archive: true,
   paymentCapture: true,
+  markdown: true,
+  screenshot: false,
+  polite: true,
+  sitemapSeed: false,
+  smartExtract: false,
   maxPages: 25,
   maxDepth: 2,
   scope: "site" as CrawlScope,
@@ -34,19 +61,24 @@ const UNSIN_PRESET = {
 
 export default function HomePage() {
   const router = useRouter();
-  const [startUrl, setStartUrl] = useState(UNSIN_PRESET.startUrl);
-  const [siteType, setSiteType] = useState<SiteType>("list-detail");
+  const [startUrl, setStartUrl] = useState(BENCHMARK_PRESET.startUrl);
+  const [siteType, setSiteType] = useState<SiteType>("dynamic");
   const [structure, setStructure] = useState(true);
-  const [extract, setExtract] = useState(true);
+  const [extract, setExtract] = useState(false);
   const [archive, setArchive] = useState(true);
-  const [paymentCapture, setPaymentCapture] = useState(true);
-  const [maxPages, setMaxPages] = useState(25);
+  const [paymentCapture, setPaymentCapture] = useState(false);
+  const [markdown, setMarkdown] = useState(true);
+  const [screenshot, setScreenshot] = useState(true);
+  const [polite, setPolite] = useState(true);
+  const [sitemapSeed, setSitemapSeed] = useState(true);
+  const [smartExtract, setSmartExtract] = useState(true);
+  const [maxPages, setMaxPages] = useState(30);
   const [maxDepth, setMaxDepth] = useState(2);
   const [scope, setScope] = useState<CrawlScope>("site");
-  const [listLinkSelector, setListLinkSelector] = useState(".free-cont a");
-  const [detailUrlIncludes, setDetailUrlIncludes] = useState("intro.php?cid=");
+  const [listLinkSelector, setListLinkSelector] = useState("");
+  const [detailUrlIncludes, setDetailUrlIncludes] = useState("");
   const [listItemSelector, setListItemSelector] = useState("");
-  const [extractorRows, setExtractorRows] = useState<ExtractorRow[]>(UNSIN_PRESET.extractorRows);
+  const [extractorRows, setExtractorRows] = useState<ExtractorRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,25 +87,46 @@ export default function HomePage() {
   const canSubmit = useMemo(
     () =>
       startUrl.trim().length > 0 &&
-      (structure || extract || archive || paymentCapture) &&
+      (structure ||
+        extract ||
+        archive ||
+        paymentCapture ||
+        markdown ||
+        screenshot ||
+        smartExtract) &&
       !busy,
-    [startUrl, structure, extract, archive, paymentCapture, busy],
+    [
+      startUrl,
+      structure,
+      extract,
+      archive,
+      paymentCapture,
+      markdown,
+      screenshot,
+      smartExtract,
+      busy,
+    ],
   );
 
-  function applyUnsinPreset() {
-    setStartUrl(UNSIN_PRESET.startUrl);
-    setSiteType(UNSIN_PRESET.siteType);
-    setStructure(UNSIN_PRESET.structure);
-    setExtract(UNSIN_PRESET.extract);
-    setArchive(UNSIN_PRESET.archive);
-    setPaymentCapture(UNSIN_PRESET.paymentCapture);
-    setMaxPages(UNSIN_PRESET.maxPages);
-    setMaxDepth(UNSIN_PRESET.maxDepth);
-    setScope(UNSIN_PRESET.scope);
-    setListLinkSelector(UNSIN_PRESET.listLinkSelector);
-    setDetailUrlIncludes(UNSIN_PRESET.detailUrlIncludes);
-    setListItemSelector(UNSIN_PRESET.listItemSelector);
-    setExtractorRows(UNSIN_PRESET.extractorRows);
+  function applyPreset(p: typeof BENCHMARK_PRESET | typeof UNSIN_PRESET) {
+    setStartUrl(p.startUrl);
+    setSiteType(p.siteType);
+    setStructure(p.structure);
+    setExtract(p.extract);
+    setArchive(p.archive);
+    setPaymentCapture(p.paymentCapture);
+    setMarkdown(p.markdown);
+    setScreenshot(p.screenshot);
+    setPolite(p.polite);
+    setSitemapSeed(p.sitemapSeed);
+    setSmartExtract(p.smartExtract);
+    setMaxPages(p.maxPages);
+    setMaxDepth(p.maxDepth);
+    setScope(p.scope);
+    setListLinkSelector(p.listLinkSelector);
+    setDetailUrlIncludes(p.detailUrlIncludes);
+    setListItemSelector(p.listItemSelector);
+    setExtractorRows(p.extractorRows);
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -98,9 +151,24 @@ export default function HomePage() {
         body: JSON.stringify({
           startUrl: startUrl.trim(),
           siteType,
-          features: { structure, extract, archive, paymentCapture },
+          features: {
+            structure,
+            extract,
+            archive,
+            paymentCapture,
+            markdown,
+            screenshot,
+            polite,
+            sitemapSeed,
+            smartExtract,
+          },
           extractors,
-          limits: { maxPages, maxDepth },
+          limits: {
+            maxPages,
+            maxDepth,
+            requestDelayMs: polite ? 800 : 0,
+            maxConcurrency: polite ? 1 : siteType === "static" ? 5 : 2,
+          },
           scope,
           listLinkSelector: listLinkSelector.trim() || undefined,
           detailUrlIncludes: detailUrlIncludes
@@ -123,17 +191,28 @@ export default function HomePage() {
   return (
     <div>
       <div className="hero">
-        <h1>사이트 전체를 지도처럼 읽고, 데이터로 뽑기</h1>
+        <h1>참고 사이트를 지도처럼 읽고, 벤치 재료로 뽑기</h1>
         <p>
-          예: 운세의 신 홈/목록 → 상품 카드 클릭 →{" "}
-          <code>fortun.unsin.co.kr/intro.php?cid=…</code> 상세(소개·태그·구성)까지
-          같은 사이트로 보고 따라갑니다. 관련 서브도메인은 기본 허용입니다.
+          범용 로컬 크롤러입니다. Crawlee를 엔진으로 유지하고, Firecrawl·Scrapling·Browser Use 식{" "}
+          <strong>능력만</strong> 메뉴로 흡수했습니다 (외부 SaaS/우회/LLM 에이전트 없음).
+          새 프로젝트 IA·카피·UX 참고용 ZIP을 만듭니다.
         </p>
       </div>
 
       <form className="card" onSubmit={onSubmit}>
         <div className="btn-row" style={{ marginBottom: 14 }}>
-          <button type="button" className="btn secondary" onClick={applyUnsinPreset}>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => applyPreset(BENCHMARK_PRESET)}
+          >
+            범용 벤치 프리셋
+          </button>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => applyPreset(UNSIN_PRESET)}
+          >
             운세의 신(짝사랑 목록) 프리셋
           </button>
         </div>
@@ -145,12 +224,11 @@ export default function HomePage() {
             required
             value={startUrl}
             onChange={(e) => setStartUrl(e.target.value)}
-            placeholder="https://www.unsin.co.kr/unse/fortun/submain/result?ca2=37"
+            placeholder="https://example.com"
           />
         </label>
         <p className="hint">
-          홈만 넣어도 됩니다. 다만 페이지 수/깊이를 넉넉히 주세요 (예: 페이지 50, 깊이 3).
-          상세만 빠르게 보려면 목록 URL부터 시작하는 걸 추천합니다.
+          홈·문서·랜딩·스토어 어떤 URL이든 가능합니다. 깊이/페이지 수를 사이트 규모에 맞게 조절하세요.
         </p>
 
         <div style={{ marginBottom: 8 }}>
@@ -187,13 +265,13 @@ export default function HomePage() {
               onChange={() => setSiteType("list-detail")}
             />
             <strong>3. 목록 → 상세</strong>
-            <small>메뉴/목록 후 상세(다른 서브도메인 포함).</small>
+            <small>메뉴/목록 후 상세(서브도메인 포함).</small>
           </label>
         </div>
 
         <div style={{ marginBottom: 4 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "#cbd5e1" }}>
-            작업 모드
+            작업 모드 (기능 벤치)
           </span>
         </div>
         <div className="checks">
@@ -203,7 +281,7 @@ export default function HomePage() {
               checked={structure}
               onChange={(e) => setStructure(e.target.checked)}
             />
-            B. 구조·사이트맵
+            B. 구조·사이트맵·시그널
           </label>
           <label>
             <input
@@ -211,7 +289,7 @@ export default function HomePage() {
               checked={extract}
               onChange={(e) => setExtract(e.target.checked)}
             />
-            C. 데이터 추출
+            C. CSS 데이터 추출
           </label>
           <label>
             <input
@@ -224,17 +302,67 @@ export default function HomePage() {
           <label>
             <input
               type="checkbox"
+              checked={markdown}
+              onChange={(e) => setMarkdown(e.target.checked)}
+            />
+            E. Markdown 정제
+            <span className="check-tag">Firecrawl</span>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={screenshot}
+              onChange={(e) => setScreenshot(e.target.checked)}
+            />
+            N. 페이지 스크린샷
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={smartExtract}
+              onChange={(e) => setSmartExtract(e.target.checked)}
+            />
+            G. 스마트 추출
+            <span className="check-tag">Scrapling</span>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={sitemapSeed}
+              onChange={(e) => setSitemapSeed(e.target.checked)}
+            />
+            D. sitemap.xml 시드
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={polite}
+              onChange={(e) => setPolite(e.target.checked)}
+            />
+            J. 완만 크롤
+            <span className="check-tag">Crawlee</span>
+          </label>
+          <label>
+            <input
+              type="checkbox"
               checked={paymentCapture}
               onChange={(e) => setPaymentCapture(e.target.checked)}
             />
-            결제 화면 캡처 (상세 URL 전체, 결제 실행 안 함)
+            결제 화면 캡처 (결제 실행 안 함)
           </label>
         </div>
+        <p className="hint">
+          매 job마다 <code>benchmark-recipe.json</code> 이 저장됩니다 (재현용 얇은 레시피 · Browser Use 아이디어, LLM 없음).
+          CAPTCHA/안티봇 우회·외부 스크랩 SaaS 호출은 지원하지 않습니다.
+        </p>
         {paymentCapture && (
           <p className="hint">
-            수집된 상품 상세(<code>intro.php?cid=…</code>)마다 결제 UI(
-            <code>buycash/result</code>)를 열어 HTML·스크린샷·결제수단/폼 구조를 저장합니다.
-            카드 결제 완료는 하지 않습니다. 상세가 많으면 시간이 꽤 걸립니다.
+            상품 상세(<code>intro.php?cid=…</code>)마다 결제 UI HTML·스크린샷·폼 구조를 저장합니다.
+          </p>
+        )}
+        {screenshot && siteType === "static" && (
+          <p className="hint">
+            단순 HTML 모드에서도 크롤 후 Playwright로 스크린샷 2차 패스를 돌립니다. 시간이 더 걸립니다.
           </p>
         )}
 
@@ -250,7 +378,7 @@ export default function HomePage() {
             />
           </label>
           <label className="field">
-            <span>최대 깊이 (홈→목록→상세 = 2~3)</span>
+            <span>최대 깊이</span>
             <input
               type="number"
               min={0}
@@ -264,7 +392,7 @@ export default function HomePage() {
         <label className="field">
           <span>크롤 범위</span>
           <select value={scope} onChange={(e) => setScope(e.target.value as CrawlScope)}>
-            <option value="site">site — 관련 서브도메인 포함 (추천, fortun.unsin.co.kr OK)</option>
+            <option value="site">site — 관련 서브도메인 포함</option>
             <option value="origin">origin — 시작 호스트만</option>
           </select>
         </label>
@@ -277,26 +405,25 @@ export default function HomePage() {
                 type="text"
                 value={listLinkSelector}
                 onChange={(e) => setListLinkSelector(e.target.value)}
-                placeholder=".free-cont a"
+                placeholder=".product a"
               />
             </label>
-            <p className="hint">운세의 신 상품 카드: <code>.free-cont a</code></p>
             <label className="field">
-              <span>상세 URL에 포함될 문자열</span>
+              <span>상세 URL에 포함될 문자열 (쉼표 구분)</span>
               <input
                 type="text"
                 value={detailUrlIncludes}
                 onChange={(e) => setDetailUrlIncludes(e.target.value)}
-                placeholder="intro.php?cid="
+                placeholder="/product/, intro.php?cid="
               />
             </label>
             <label className="field">
-              <span>목록 카드 선택자 (목록 페이지에서 행 단위 추출할 때만)</span>
+              <span>목록 카드 선택자 (행 단위 추출)</span>
               <input
                 type="text"
                 value={listItemSelector}
                 onChange={(e) => setListItemSelector(e.target.value)}
-                placeholder="비우면 페이지 단위 추출 (상세 페이지용)"
+                placeholder="비우면 페이지 단위"
               />
             </label>
           </>
@@ -305,7 +432,7 @@ export default function HomePage() {
         {extract && (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#cbd5e1", marginBottom: 8 }}>
-              추출 필드 (상세 페이지 CSS 선택자)
+              추출 필드 (CSS) — 스마트 추출과 이름이 겹치면 여기 값이 우선
             </div>
             {extractorRows.map((row, i) => (
               <div className="grid-2" key={i} style={{ marginBottom: 8 }}>

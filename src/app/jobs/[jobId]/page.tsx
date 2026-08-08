@@ -222,10 +222,67 @@ export default function JobPage() {
                   {!selected.forms.length && <li>(none)</li>}
                 </ul>
               </div>
+              {selected.signals && (
+                <div style={{ marginTop: 12 }}>
+                  <strong>Page signals (벤치)</strong>
+                  <ul style={{ fontSize: 13 }}>
+                    {selected.signals.lang && <li>lang: {selected.signals.lang}</li>}
+                    {selected.signals.generator && (
+                      <li>generator: {selected.signals.generator}</li>
+                    )}
+                    {!!selected.signals.frameworks?.length && (
+                      <li>frameworks: {selected.signals.frameworks.join(", ")}</li>
+                    )}
+                    {!!selected.signals.analytics?.length && (
+                      <li>analytics: {selected.signals.analytics.join(", ")}</li>
+                    )}
+                    {!!selected.signals.thirdParties?.length && (
+                      <li>third-parties: {selected.signals.thirdParties.join(", ")}</li>
+                    )}
+                    {selected.signals.ogTitle && (
+                      <li>og:title: {selected.signals.ogTitle}</li>
+                    )}
+                    {selected.markdownFile && (
+                      <li>
+                        markdown: <code>{selected.markdownFile}</code>
+                      </li>
+                    )}
+                    {selected.screenshotFile && (
+                      <li>
+                        screenshot: <code>{selected.screenshotFile}</code>
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </>
       )}
+
+      {meta?.input.features.markdown && (
+        <>
+          <h2 className="section-title">Markdown 정제 (E)</h2>
+          <p className="meta-line">
+            ZIP 안 <code>markdown/*.md</code>, <code>markdown/index.md</code>
+          </p>
+        </>
+      )}
+
+      {meta?.input.features.screenshot && (
+        <>
+          <h2 className="section-title">스크린샷 (N)</h2>
+          <p className="meta-line">
+            ZIP 안 <code>screenshots/*.png</code>, <code>screenshots/index.html</code>
+          </p>
+        </>
+      )}
+
+      <h2 className="section-title">재현 레시피</h2>
+      <p className="meta-line">
+        매 job에 <code>benchmark-recipe.json</code> 이 포함됩니다. 같은 설정으로 다시 POST 할 때
+        참고하세요 (LLM 에이전트 없음).
+      </p>
 
       {data?.extract && data.extract.length > 0 && (
         <>

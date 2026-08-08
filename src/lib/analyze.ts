@@ -1,5 +1,11 @@
 import * as cheerio from "cheerio";
-import type { CrawlScope, Extractor, PageLink, PageStructure } from "./types";
+import type {
+  CrawlScope,
+  Extractor,
+  PageLink,
+  PageSignals,
+  PageStructure,
+} from "./types";
 import { isInScope, normalizeUrl, sameOrigin, shouldSkipUrl } from "./url";
 
 function cleanText(s: string): string {
@@ -51,6 +57,9 @@ export function analyzeHtml(
   depth: number,
   meta?: { statusCode?: number; contentType?: string; finalUrl?: string; error?: string },
 ): PageStructure {
+  // Signals need raw script tags — extract before stripping
+  const signals = collectPageSignals(html, pageUrl);
+
   const $ = cheerio.load(html);
   $("script, style, noscript").remove();
 
@@ -98,6 +107,113 @@ export function analyzeHtml(
     depth,
     contentType: meta?.contentType,
     error: meta?.error,
+    signals,
+  };
+}
+
+/** Benchmark-oriented stack / SEO / third-party signals (always cheap). */
+export function collectPageSignals(html: string, pageUrl: string): PageSignals {
+  const $ = cheerio.load(html);
+  const frameworks = new Set<string>();
+  const analytics = new Set<string>();
+  const thirdParties = new Set<string>();
+
+  const gen = $('meta[name="generator"]').attr("content")?.trim();
+  const lang =
+    $("html").attr("lang")?.trim() ||
+    $('meta[http-equiv="content-language"]').attr("content")?.trim();
+
+  const scripts: string[] = [];
+  $("script[src]").each((_, el) => {
+    const src = $(el).attr("src") || "";
+    if (src) scripts.push(src);
+  });
+  $("link[href]").each((_, el) => {
+    const href = $(el).attr("href") || "";
+    if (href) scripts.push(href);
+  });
+
+  const blob = `${html.slice(0, 200_000)}\n${scripts.join("\n")}`.toLowerCase();
+
+  const fwRules: [RegExp, string][] = [
+    [/__next|\/_next\/|next\.js/i, "Next.js"],
+    [/react(-dom)?(\.min)?\.js|data-reactroot|_react/i, "React"],
+    [/vue(\.runtime)?(\.min)?\.js|__vue__/i, "Vue"],
+    [/ng-version|angular(\.min)?\.js/i, "Angular"],
+    [/nuxt/i, "Nuxt"],
+    [/svelte/i, "Svelte"],
+    [/wp-content|wordpress/i, "WordPress"],
+    [/shopify/i, "Shopify"],
+    [/cafe24|makeshop|godo/i, "KR e-commerce platform"],
+    [/tailwind/i, "Tailwind"],
+    [/bootstrap/i, "Bootstrap"],
+    [/jquery/i, "jQuery"],
+  ];
+  for (const [re, name] of fwRules) {
+    if (re.test(blob)) frameworks.add(name);
+  }
+
+  const anRules: [RegExp, string][] = [
+    [/google-analytics|gtag\/js|googletagmanager/i, "Google Analytics/GTM"],
+    [/facebook\.net\/|fbevents|fbq\(/i, "Meta Pixel"],
+    [/hotjar/i, "Hotjar"],
+    [/mixpanel/i, "Mixpanel"],
+    [/amplitude/i, "Amplitude"],
+    [/clarity\.ms/i, "MS Clarity"],
+  ];
+  for (const [re, name] of anRules) {
+    if (re.test(blob)) analytics.add(name);
+  }
+
+  const tpRules: [RegExp, string][] = [
+    [/tosspayments|js\.tosspayments/i, "Toss Payments"],
+    [/iamport|portone/i, "PortOne/Iamport"],
+    [/stripe\.com|js\.stripe/i, "Stripe"],
+    [/paypal/i, "PayPal"],
+    [/cloudflare/i, "Cloudflare"],
+    [/kakao\.com|developers\.kakao/i, "Kakao"],
+    [/channel\.io|channeltalk/i, "Channel Talk"],
+    [/zendesk/i, "Zendesk"],
+  ];
+  for (const [re, name] of tpRules) {
+    if (re.test(blob)) thirdParties.add(name);
+  }
+
+  // Host-level third parties from external script URLs
+  try {
+    const pageHost = new URL(pageUrl).hostname;
+    for (const src of scripts) {
+      try {
+        const abs = new URL(src, pageUrl);
+        if (abs.hostname && abs.hostname !== pageHost && !abs.hostname.endsWith(`.${pageHost}`)) {
+          const host = abs.hostname.replace(/^www\./, "");
+          if (
+            /cdn|cloud|static|analytics|pixel|pay|font|googleapis|gstatic/.test(host)
+          ) {
+            thirdParties.add(host);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return {
+    lang: lang || undefined,
+    canonical:
+      $('link[rel="canonical"]').attr("href")?.trim() ||
+      normalizeUrl($('link[rel="canonical"]').attr("href") || "", pageUrl) ||
+      undefined,
+    ogTitle: $('meta[property="og:title"]').attr("content")?.trim(),
+    ogDescription: $('meta[property="og:description"]').attr("content")?.trim(),
+    ogImage: $('meta[property="og:image"]').attr("content")?.trim(),
+    generator: gen,
+    frameworks: [...frameworks].slice(0, 12),
+    analytics: [...analytics].slice(0, 12),
+    thirdParties: [...thirdParties].slice(0, 20),
   };
 }
 

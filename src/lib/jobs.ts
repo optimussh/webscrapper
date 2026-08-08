@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import type {
+  BenchmarkRecipe,
   CreateJobInput,
   ExtractedPage,
   JobLimits,
@@ -15,6 +16,8 @@ import type {
 const DEFAULT_LIMITS: JobLimits = {
   maxPages: 50,
   maxDepth: 3,
+  requestDelayMs: 800,
+  maxConcurrency: 1,
 };
 
 const HARD_MAX_PAGES = 200;
@@ -39,7 +42,15 @@ function clampLimits(partial?: Partial<JobLimits>): JobLimits {
     HARD_MAX_DEPTH,
     Math.max(0, partial?.maxDepth ?? DEFAULT_LIMITS.maxDepth),
   );
-  return { maxPages, maxDepth };
+  const requestDelayMs = Math.min(
+    10_000,
+    Math.max(0, partial?.requestDelayMs ?? DEFAULT_LIMITS.requestDelayMs ?? 800),
+  );
+  const maxConcurrency = Math.min(
+    10,
+    Math.max(1, partial?.maxConcurrency ?? DEFAULT_LIMITS.maxConcurrency ?? 1),
+  );
+  return { maxPages, maxDepth, requestDelayMs, maxConcurrency };
 }
 
 export async function ensureJobsRoot(): Promise<void> {
@@ -66,6 +77,11 @@ export async function createJob(input: CreateJobInput): Promise<JobMeta> {
     extract: input.features?.extract ?? false,
     archive: input.features?.archive ?? true,
     paymentCapture: input.features?.paymentCapture ?? false,
+    markdown: input.features?.markdown ?? false,
+    screenshot: input.features?.screenshot ?? false,
+    polite: input.features?.polite ?? false,
+    sitemapSeed: input.features?.sitemapSeed ?? false,
+    smartExtract: input.features?.smartExtract ?? false,
   };
 
   const meta: JobMeta = {
@@ -94,6 +110,8 @@ export async function createJob(input: CreateJobInput): Promise<JobMeta> {
 
   const dir = jobDir(id);
   await fs.mkdir(path.join(dir, "html"), { recursive: true });
+  await fs.mkdir(path.join(dir, "markdown"), { recursive: true });
+  await fs.mkdir(path.join(dir, "screenshots"), { recursive: true });
   await writeJson(path.join(dir, "meta.json"), meta);
   return meta;
 }
@@ -266,20 +284,94 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function urlToSafeFileName(pageUrl: string): string {
+export function urlToSafeBase(pageUrl: string): string {
   const u = new URL(pageUrl);
   let base = `${u.hostname}${u.pathname}`;
-  // Keep full query (cid=…) — do not truncate; collisions were rare but titles differ either way
   if (u.search) {
     const q = u.search.replace(/^\?/, "").replace(/[^a-zA-Z0-9._=-]+/g, "_");
     base += `_${q.slice(0, 80)}`;
   }
-  const safe = base
+  return base
     .replace(/\/+$/, "")
     .replace(/[^a-zA-Z0-9._-]+/g, "_")
     .replace(/_+/g, "_")
-    .slice(0, 180);
-  return `${safe || "index"}.html`;
+    .slice(0, 180) || "index";
+}
+
+export function urlToSafeFileName(pageUrl: string): string {
+  return `${urlToSafeBase(pageUrl)}.html`;
+}
+
+export async function saveMarkdown(
+  jobId: string,
+  pageUrl: string,
+  markdown: string,
+): Promise<string> {
+  const fileName = `${urlToSafeBase(pageUrl)}.md`;
+  const rel = path.join("markdown", fileName);
+  await fs.writeFile(path.join(jobDir(jobId), rel), markdown, "utf8");
+  return rel;
+}
+
+export async function saveMarkdownIndex(
+  jobId: string,
+  entries: { url: string; title?: string; file: string }[],
+): Promise<void> {
+  const rows = entries
+    .map(
+      (e) =>
+        `- [${escapeHtml(e.title || e.url)}](./${path.basename(e.file)}) — \`${e.url}\``,
+    )
+    .join("\n");
+  const body = `# Markdown archive (${entries.length})\n\n${rows}\n`;
+  await fs.writeFile(path.join(jobDir(jobId), "markdown", "index.md"), body, "utf8");
+}
+
+export async function saveScreenshot(
+  jobId: string,
+  pageUrl: string,
+  png: Buffer,
+): Promise<string> {
+  const fileName = `${urlToSafeBase(pageUrl)}.png`;
+  const rel = path.join("screenshots", fileName);
+  await fs.writeFile(path.join(jobDir(jobId), rel), png);
+  return rel;
+}
+
+export async function saveScreenshotIndex(
+  jobId: string,
+  entries: { url: string; title?: string; file: string }[],
+): Promise<void> {
+  const rows = entries
+    .map((e) => {
+      const name = path.basename(e.file);
+      return `<li><a href="./${name}"><img src="./${name}" alt="" style="max-width:220px;height:auto;border:1px solid #334155;border-radius:6px;display:block;margin-bottom:4px"/><span>${escapeHtml(e.title || e.url)}</span></a><br/><code style="font-size:11px">${escapeHtml(e.url)}</code></li>`;
+    })
+    .join("\n");
+  const html = `<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"/><title>Screenshots</title>
+<style>body{font:14px system-ui;background:#0f172a;color:#e2e8f0;max-width:1100px;margin:24px auto;padding:0 16px}
+ul{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;list-style:none;padding:0}
+a{color:#7dd3fc;text-decoration:none}</style></head>
+<body><h1>Screenshots (${entries.length})</h1><ul>${rows}</ul></body></html>`;
+  await fs.writeFile(
+    path.join(jobDir(jobId), "screenshots", "index.html"),
+    html,
+    "utf8",
+  );
+}
+
+export async function saveBenchmarkRecipe(
+  jobId: string,
+  input: JobMeta["input"],
+): Promise<void> {
+  const recipe: BenchmarkRecipe = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    note: "Reproducible crawl plan (thin recipe — no LLM). Re-POST to /api/jobs with input fields.",
+    input,
+  };
+  await writeJson(path.join(jobDir(jobId), "benchmark-recipe.json"), recipe);
 }
 
 export async function loadJobArtifacts(jobId: string): Promise<{

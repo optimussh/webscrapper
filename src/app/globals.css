@@ -228,6 +228,20 @@ textarea {
   background: rgba(91, 140, 255, 0.12);
 }
 
+.check-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  vertical-align: middle;
+}
+
 .checks {
   display: flex;
   flex-wrap: wrap;

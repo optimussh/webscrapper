@@ -1,14 +1,42 @@
 export type SiteType = "static" | "dynamic" | "list-detail";
 
+/**
+ * Work-mode flags. Capabilities are inspired by OSS tools (Firecrawl, Scrapling,
+ * Crawlee, Browser Use) but implemented in-house on top of Crawlee — no vendor swap.
+ */
 export type FeatureFlags = {
-  structure: boolean; // B
-  extract: boolean; // C
-  archive: boolean; // A
+  /** B — sitemap, headings, links, forms, page signals */
+  structure: boolean;
+  /** C — CSS selector extractors → extract.json */
+  extract: boolean;
+  /** A — raw HTML snapshots under html/ */
+  archive: boolean;
   /**
    * Capture payment UI (e.g. buycash/result) for every product detail URL.
    * Stops before actual payment. Uses Playwright form POST.
    */
   paymentCapture?: boolean;
+  /**
+   * E (Firecrawl-inspired) — clean Markdown body per page under markdown/
+   */
+  markdown?: boolean;
+  /**
+   * N — full-page screenshots under screenshots/ (Playwright)
+   */
+  screenshot?: boolean;
+  /**
+   * J (Crawlee-inspired) — low concurrency + delay between requests
+   */
+  polite?: boolean;
+  /**
+   * D — seed queue from /sitemap.xml (and common variants) when present
+   */
+  sitemapSeed?: boolean;
+  /**
+   * G (Scrapling adaptive idea, light) — heuristic field extractors when
+   * user CSS extractors are empty or as extras for title/price/cta/headings
+   */
+  smartExtract?: boolean;
 };
 
 export type Extractor = {
@@ -22,6 +50,10 @@ export type Extractor = {
 export type JobLimits = {
   maxPages: number;
   maxDepth: number;
+  /** Min delay between requests when polite (ms). Default 800. */
+  requestDelayMs?: number;
+  /** Max concurrent requests when polite. Default 1. */
+  maxConcurrency?: number;
 };
 
 /** origin = exact host; site = related subdomains (www + fortun.unsin.co.kr) */
@@ -78,6 +110,22 @@ export type PageLink = {
   external: boolean;
 };
 
+/** Lightweight stack / SEO hints for reference-site benchmarking */
+export type PageSignals = {
+  lang?: string;
+  canonical?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  generator?: string;
+  /** Detected front-end / platform hints from script src and meta */
+  frameworks: string[];
+  /** Analytics / tag-manager hints */
+  analytics: string[];
+  /** Notable third-party hosts (payment, CDN, chat) */
+  thirdParties: string[];
+};
+
 export type PageStructure = {
   url: string;
   finalUrl?: string;
@@ -94,6 +142,10 @@ export type PageStructure = {
   depth: number;
   contentType?: string;
   error?: string;
+  /** Present when structure analysis ran */
+  signals?: PageSignals;
+  markdownFile?: string;
+  screenshotFile?: string;
 };
 
 export type ExtractedPage = {
@@ -101,6 +153,8 @@ export type ExtractedPage = {
   /** Present when extracted from a list card */
   itemIndex?: number;
   data: Record<string, string | string[] | null>;
+  /** true when row came from smartExtract heuristics */
+  smart?: boolean;
 };
 
 export type SitemapNode = {
@@ -119,6 +173,17 @@ export type JobSummary = {
   durationMs: number;
   paymentCaptured?: number;
   paymentFailed?: number;
+  markdownCount?: number;
+  screenshotCount?: number;
+  sitemapSeedCount?: number;
+};
+
+/** Reproducible job plan (Browser Use "recipe" idea — thin, no LLM). */
+export type BenchmarkRecipe = {
+  version: 1;
+  createdAt: string;
+  note: string;
+  input: JobMeta["input"];
 };
 
 /** One payment-page benchmark capture (no payment completed). */
