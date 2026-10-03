@@ -1,5 +1,15 @@
 # PROGRESS — webscrapper
 
+## 2026-10-03
+
+### Reference mirror and AI brief
+
+- One-click capture: public URL, same-site crawl (30 pages / depth 2), GNU wget page-requisites, ZIP.
+- Every finished job writes `START-HERE.md`, `ai-brief/GUIDE.md`, and `ai-brief/brief.json`.
+- Raw HTML/CSS/images stay reference-only (`reference/mirror`, existing `html/` and screenshots). The guide tells coding agents to rebuild from scratch with OFL/Apache fonts and original copy, and not to paste scraped assets.
+- Private and local hosts are rejected before a job starts. wget is used when `wget.exe` is on the machine; otherwise a node page-requisites fallback runs.
+- This is an engineering handoff, not legal advice.
+
 ## 2026-08-09
 
 ### Verify / “deploy”

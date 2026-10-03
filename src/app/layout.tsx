@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Webscrapper — 사이트 구조 분석 & 데이터 추출",
+  title: "Webscrapper — 참고 수집과 구현 브리프",
   description:
-    "URL을 입력하면 메뉴·페이지·상세까지 크롤링하고 구조 분석, 데이터 추출, ZIP 다운로드를 제공합니다.",
+    "URL 한 번으로 구조, 페이지 정보, wget 참고 파일을 ZIP으로 받고 AI 구현 가이드를 포함합니다.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span className="brand-mark">WS</span>
               <span>
                 Webscrapper
-                <small>structure · extract · archive</small>
+                <small>structure · reference · brief</small>
               </span>
             </a>
             <a
@@ -31,7 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </header>
           <main className="main">{children}</main>
           <footer className="footer">
-            동일 출처(same-origin)만 크롤합니다. robots·이용약관을 준수하세요.
+            공개 http(s) 사이트만, 같은 사이트 범위로 수집합니다. robots와 이용약관을 확인하고, 받은 파일은 참고로만 씁니다.
           </footer>
         </div>
       </body>

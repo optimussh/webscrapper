@@ -18,6 +18,7 @@ Repo: https://github.com/optimussh/webscrapper
 | **G** 스마트 추출 | title/price/cta/sections 휴리스틱 | Scrapling (light) |
 | **D** sitemap 시드 | `/sitemap.xml` URL 시드 | Firecrawl-ish |
 | **J** 완만 크롤 | 낮은 동시성 + 요청 간 delay | Crawlee polite |
+| **W** 디자인 파일 미러 | 수집한 페이지의 HTML·CSS·이미지 (참고 전용) | GNU wget |
 | 결제 UI 캡처 | 결제 화면만 (결제 실행 안 함) | 특수 레시피 |
 | 레시피 | 매 job `benchmark-recipe.json` | Browser Use (no LLM) |
 
@@ -62,11 +63,21 @@ Vercel 같은 서버리스에는 그대로 올리지 않습니다.
 
 ## 사용 흐름
 
-1. **범용 벤치 프리셋** 또는 URL 직접 입력  
-2. 사이트 유형 1 / 2 / 3  
-3. 작업 모드 체크 (기본: B+A+E+N+G+D+J)  
-4. (C) CSS 필드 / (3) 목록·상세 선택자  
-5. **크롤 시작** → 진행 화면 → **ZIP 다운로드**
+1. URL 입력 후 **한 번에 가져오기** (구조 + wget 미러 + 구현 브리프, 최대 30페이지 / 깊이 2)  
+2. 또는 **고급 설정**에서 유형·모드를 고친 뒤 **크롤 시작**  
+3. 진행 화면 → **ZIP 다운로드**  
+4. ZIP의 `START-HERE.md` → `ai-brief/GUIDE.md` 를 코딩 에이전트에 넘긴다
+
+### AI에게 비슷한 사이트를 맡길 때
+
+스크랩은 수집 시점에 두 층으로 나뉩니다.
+
+| 층 | 경로 | 용도 |
+|----|------|------|
+| 구현 지시 | `ai-brief/GUIDE.md`, `ai-brief/brief.json` | 섹션 종류·순서. 에이전트는 이것만 구현 입력으로 사용 |
+| 참고 파일 | `reference/mirror/`, `html/`, `screenshots/`, `markdown/` | 화면 덩어리를 눈으로 확인. 새 저장소에 복사하지 않음 |
+
+가이드는 문장·로고·폰트 파일·이미지·색 코드를 가져가지 말고, SIL OFL / Apache-2.0 폰트와 직접 만든 카피·이미지로 처음부터 구현하라고 적혀 있습니다. 법률 자문 문서는 아닙니다.
 
 ### 예: 운세의 신 (목록 → 상세)
 
@@ -102,6 +113,12 @@ npx tsx scripts/smoke-payment.ts
 ## ZIP 구성
 
 ```
+START-HERE.md
+ai-brief/GUIDE.md
+ai-brief/brief.json
+reference/README.md
+reference/mirror/          # W — wget (또는 node page-requisites)
+reference/design-observations.json
 summary.json
 sitemap.json
 pages.json          # structure + signals + md/shot paths
@@ -133,7 +150,8 @@ payment/            # optional
     "polite": true,
     "sitemapSeed": true,
     "smartExtract": true,
-    "paymentCapture": false
+    "paymentCapture": false,
+    "wgetMirror": true
   },
   "limits": { "maxPages": 30, "maxDepth": 2, "requestDelayMs": 800, "maxConcurrency": 1 }
 }

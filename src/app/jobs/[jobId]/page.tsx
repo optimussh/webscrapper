@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import type {
+  AiBrief,
   ExtractedPage,
   JobMeta,
   JobSummary,
+  MirrorReport,
   PageStructure,
   PaymentCapture,
   SitemapNode,
@@ -18,6 +20,9 @@ type Artifacts = {
   extract?: ExtractedPage[];
   summary?: JobSummary;
   payment?: PaymentCapture[];
+  brief?: AiBrief;
+  guide?: string;
+  mirror?: MirrorReport;
 };
 
 function renderTree(node: SitemapNode, prefix = ""): string {
@@ -126,7 +131,52 @@ export default function JobPage() {
               새 작업
             </a>
           </div>
+          <p className="hint">
+            ZIP을 열면 <code>START-HERE.md</code> 다음 <code>ai-brief/GUIDE.md</code> 를 코딩 에이전트에
+            넘깁니다. <code>reference/</code>, <code>html/</code>, 스크린샷은 섹션 순서를 보는 참고이고
+            새 프로젝트에 복사하지 않습니다.
+          </p>
         </div>
+      )}
+
+      {data?.brief && (
+        <>
+          <h2 className="section-title">구현 브리프</h2>
+          <div className="card">
+            <p className="meta-line" style={{ marginTop: 0 }}>
+              페이지 {data.brief.pages.length}개
+              {data.mirror && (
+                <>
+                  {" "}
+                  · 미러 {data.mirror.engine} · 파일 {data.mirror.files}개
+                </>
+              )}
+            </p>
+            <ul>
+              {data.brief.pages.slice(0, 12).map((page) => (
+                <li key={page.url}>
+                  <code>{page.path}</code> — {page.sectionSketch.map((s) => s.kind).join(", ")}
+                </li>
+              ))}
+            </ul>
+            {data.mirror?.command && (
+              <p className="meta-line">
+                wget: <code>{data.mirror.command}</code>
+              </p>
+            )}
+            {data.mirror?.note && <p className="hint">{data.mirror.note}</p>}
+          </div>
+        </>
+      )}
+
+      {data?.guide && (
+        <>
+          <h2 className="section-title">GUIDE.md</h2>
+          <details className="card">
+            <summary>가이드 열기</summary>
+            <pre className="tree">{data.guide}</pre>
+          </details>
+        </>
       )}
 
       {data?.sitemap && (

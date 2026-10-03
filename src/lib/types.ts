@@ -37,6 +37,11 @@ export type FeatureFlags = {
    * user CSS extractors are empty or as extras for title/price/cta/headings
    */
   smartExtract?: boolean;
+  /**
+   * W — GNU wget page-requisites mirror of crawled pages.
+   * Files land under reference/mirror and are reference-only.
+   */
+  wgetMirror?: boolean;
 };
 
 export type Extractor = {
@@ -176,6 +181,70 @@ export type JobSummary = {
   markdownCount?: number;
   screenshotCount?: number;
   sitemapSeedCount?: number;
+  mirrorFiles?: number;
+  mirrorBytes?: number;
+  mirrorEngine?: MirrorReport["engine"];
+  aiBrief?: boolean;
+};
+
+/** Measured CSS facts. Observation only — not a spec to reproduce. */
+export type DesignObservations = {
+  note: string;
+  fonts: { value: string; count: number }[];
+  colors: { value: string; count: number }[];
+  stylesheets: string[];
+};
+
+export type MirrorReport = {
+  engine: "gnu-wget" | "node-requisites";
+  command: string;
+  exitCode: number | null;
+  files: number;
+  bytes: number;
+  note?: string;
+  skipped: string[];
+};
+
+export type BriefSection = {
+  kind: string;
+  count: number;
+};
+
+export type BriefPage = {
+  url: string;
+  path: string;
+  title: string;
+  depth: number;
+  wordCount: number;
+  imageCount: number;
+  formCount: number;
+  navLinkCount: number;
+  internalLinkCount: number;
+  /** Heading text from the source. Topic labels only — rewrite, do not reuse. */
+  sourceLabels: { level: number; text: string; reuse: "forbidden-rewrite" }[];
+  sectionSketch: BriefSection[];
+};
+
+/** License-safe handoff for a coding agent. Raw files stay out of this object. */
+export type AiBrief = {
+  version: 1;
+  purpose: "original-implementation-from-structure";
+  startUrl: string;
+  siteType: SiteType;
+  legal: {
+    use: "reference-only";
+    buildFrom: "scratch";
+    notLegalAdvice: true;
+    doNotCopy: string[];
+    allowedAssets: string[];
+  };
+  pages: BriefPage[];
+  sourceStackHints: string[];
+  mirror?: {
+    engine: MirrorReport["engine"];
+    files: number;
+    bytes: number;
+  };
 };
 
 /** Reproducible job plan (Browser Use "recipe" idea — thin, no LLM). */

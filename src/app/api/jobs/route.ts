@@ -35,6 +35,7 @@ export async function POST(req: Request) {
         polite: body.features?.polite ?? false,
         sitemapSeed: body.features?.sitemapSeed ?? false,
         smartExtract: body.features?.smartExtract ?? false,
+        wgetMirror: body.features?.wgetMirror ?? false,
       },
       extractors: body.extractors,
       limits: body.limits,

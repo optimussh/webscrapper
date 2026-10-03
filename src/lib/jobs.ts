@@ -1,13 +1,16 @@
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import { assertPublicHttpUrl } from "./public-url";
 import type {
+  AiBrief,
   BenchmarkRecipe,
   CreateJobInput,
   ExtractedPage,
   JobLimits,
   JobMeta,
   JobSummary,
+  MirrorReport,
   PageStructure,
   PaymentCapture,
   SitemapNode,
@@ -60,15 +63,7 @@ export async function ensureJobsRoot(): Promise<void> {
 export async function createJob(input: CreateJobInput): Promise<JobMeta> {
   await ensureJobsRoot();
 
-  let startUrl: URL;
-  try {
-    startUrl = new URL(input.startUrl);
-  } catch {
-    throw new Error("Invalid start URL");
-  }
-  if (!["http:", "https:"].includes(startUrl.protocol)) {
-    throw new Error("URL must be http or https");
-  }
+  const startUrl = await assertPublicHttpUrl(input.startUrl.trim());
 
   const id = randomUUID();
   const now = new Date().toISOString();
@@ -82,6 +77,7 @@ export async function createJob(input: CreateJobInput): Promise<JobMeta> {
     polite: input.features?.polite ?? false,
     sitemapSeed: input.features?.sitemapSeed ?? false,
     smartExtract: input.features?.smartExtract ?? false,
+    wgetMirror: input.features?.wgetMirror ?? false,
   };
 
   const meta: JobMeta = {
@@ -381,6 +377,9 @@ export async function loadJobArtifacts(jobId: string): Promise<{
   extract?: ExtractedPage[];
   summary?: JobSummary;
   payment?: PaymentCapture[];
+  brief?: AiBrief;
+  guide?: string;
+  mirror?: MirrorReport;
 }> {
   const meta = await readJob(jobId);
   if (!meta) throw new Error("Job not found");
@@ -395,6 +394,13 @@ export async function loadJobArtifacts(jobId: string): Promise<{
     }
   };
 
+  let guide: string | undefined;
+  try {
+    guide = await fs.readFile(path.join(dir, "ai-brief", "GUIDE.md"), "utf8");
+  } catch {
+    guide = undefined;
+  }
+
   return {
     meta,
     pages: await readOptional<PageStructure[]>("pages.json"),
@@ -402,5 +408,8 @@ export async function loadJobArtifacts(jobId: string): Promise<{
     extract: await readOptional<ExtractedPage[]>("extract.json"),
     summary: await readOptional<JobSummary>("summary.json"),
     payment: await readOptional<PaymentCapture[]>("payment/payment.json"),
+    brief: await readOptional<AiBrief>("ai-brief/brief.json"),
+    guide,
+    mirror: await readOptional<MirrorReport>("reference/mirror/report.json"),
   };
 }

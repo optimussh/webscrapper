@@ -8,7 +8,9 @@ import {
   extractFromHtml,
   extractListItems,
 } from "../lib/analyze";
+import { writeAiBrief } from "../lib/ai-brief";
 import {
+  jobDir,
   readJob,
   saveArchiveIndex,
   saveBenchmarkRecipe,
@@ -23,10 +25,11 @@ import {
   saveSummary,
   updateJob,
 } from "../lib/jobs";
+import { captureDesignMirror } from "../lib/wget-mirror";
 import { htmlToMarkdown } from "../lib/markdown";
 import { mergeExtractors } from "../lib/smart-extract";
 import { fetchSitemapSeedUrls } from "../lib/sitemap-seed";
-import type { CrawlScope, ExtractedPage, JobMeta, PageStructure } from "../lib/types";
+import type { CrawlScope, ExtractedPage, JobMeta, MirrorReport, PageStructure } from "../lib/types";
 import { isInScope, normalizeUrl, shouldSkipUrl } from "../lib/url";
 import {
   capturePaymentForDetails,
@@ -256,6 +259,20 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     // keep count on a local var set by seed helper
     sitemapSeedCount = (meta as JobMeta & { _seedCount?: number })._seedCount ?? 0;
 
+    const mirror = await mirrorDesign(jobId, input.features.wgetMirror, pages, seen.size);
+    let aiBrief = false;
+    try {
+      await writeAiBrief(jobDir(jobId), {
+        startUrl,
+        siteType: input.siteType,
+        pages,
+        mirror,
+      });
+      aiBrief = true;
+    } catch (briefErr) {
+      console.error("ai brief failed", briefErr);
+    }
+
     await saveSummary(jobId, {
       id: jobId,
       startUrl,
@@ -269,6 +286,10 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       markdownCount: mdEntries.length,
       screenshotCount: shotEntries.length,
       sitemapSeedCount,
+      mirrorFiles: mirror?.files,
+      mirrorBytes: mirror?.bytes,
+      mirrorEngine: mirror?.engine,
+      aiBrief,
     });
 
     if (input.features.archive) {
@@ -299,6 +320,7 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     if (input.features.paymentCapture) {
       extras.push(`payment ${paymentOk}/${paymentFail}`);
     }
+    if (input.features.wgetMirror) extras.push("mirror");
 
     await updateJob(jobId, {
       status: "completed",
@@ -322,8 +344,50 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     if (pages.length) {
       await savePages(jobId, pages);
       await saveSitemap(jobId, buildSitemap(pages, startUrl));
+      try {
+        await writeAiBrief(jobDir(jobId), {
+          startUrl,
+          siteType: input.siteType,
+          pages,
+        });
+      } catch (briefErr) {
+        console.error("ai brief failed", briefErr);
+      }
     }
     throw err;
+  }
+}
+
+async function mirrorDesign(
+  jobId: string,
+  enabled: boolean | undefined,
+  pages: PageStructure[],
+  enqueued: number,
+): Promise<MirrorReport | undefined> {
+  if (!enabled || !pages.length) return undefined;
+  await updateJob(jobId, {
+    progress: {
+      pagesCrawled: pages.length,
+      pagesEnqueued: enqueued,
+      message: "Mirroring design files (wget)",
+    },
+  });
+  try {
+    return await captureDesignMirror({
+      jobRoot: jobDir(jobId),
+      pageUrls: pages.map((page) => page.finalUrl || page.url),
+    });
+  } catch (err) {
+    console.error("wget mirror failed", err);
+    return {
+      engine: "gnu-wget",
+      command: "",
+      exitCode: 1,
+      files: 0,
+      bytes: 0,
+      skipped: [],
+      note: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

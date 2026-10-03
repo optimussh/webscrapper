@@ -127,6 +127,11 @@ a:hover {
   padding: 22px;
 }
 
+.card.emphasis {
+  border-color: rgba(91, 140, 255, 0.5);
+  margin-bottom: 8px;
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;

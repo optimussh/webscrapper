@@ -24,6 +24,7 @@ const BENCHMARK_PRESET = {
   polite: true,
   sitemapSeed: true,
   smartExtract: true,
+  wgetMirror: true,
   maxPages: 30,
   maxDepth: 2,
   scope: "site" as CrawlScope,
@@ -45,6 +46,7 @@ const UNSIN_PRESET = {
   polite: true,
   sitemapSeed: false,
   smartExtract: false,
+  wgetMirror: false,
   maxPages: 25,
   maxDepth: 2,
   scope: "site" as CrawlScope,
@@ -72,6 +74,7 @@ export default function HomePage() {
   const [polite, setPolite] = useState(true);
   const [sitemapSeed, setSitemapSeed] = useState(true);
   const [smartExtract, setSmartExtract] = useState(true);
+  const [wgetMirror, setWgetMirror] = useState(true);
   const [maxPages, setMaxPages] = useState(30);
   const [maxDepth, setMaxDepth] = useState(2);
   const [scope, setScope] = useState<CrawlScope>("site");
@@ -93,7 +96,8 @@ export default function HomePage() {
         paymentCapture ||
         markdown ||
         screenshot ||
-        smartExtract) &&
+        smartExtract ||
+        wgetMirror) &&
       !busy,
     [
       startUrl,
@@ -104,6 +108,7 @@ export default function HomePage() {
       markdown,
       screenshot,
       smartExtract,
+      wgetMirror,
       busy,
     ],
   );
@@ -120,6 +125,7 @@ export default function HomePage() {
     setPolite(p.polite);
     setSitemapSeed(p.sitemapSeed);
     setSmartExtract(p.smartExtract);
+    setWgetMirror(p.wgetMirror);
     setMaxPages(p.maxPages);
     setMaxDepth(p.maxDepth);
     setScope(p.scope);
@@ -127,6 +133,52 @@ export default function HomePage() {
     setDetailUrlIncludes(p.detailUrlIncludes);
     setListItemSelector(p.listItemSelector);
     setExtractorRows(p.extractorRows);
+  }
+
+  async function postJob(body: unknown) {
+    const res = await fetch("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to start job");
+    router.push(`/jobs/${data.job.id}`);
+  }
+
+  async function onOneClick(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await postJob({
+        startUrl: startUrl.trim(),
+        siteType: "dynamic",
+        features: {
+          structure: true,
+          extract: false,
+          archive: true,
+          paymentCapture: false,
+          markdown: true,
+          screenshot: true,
+          polite: true,
+          sitemapSeed: true,
+          smartExtract: true,
+          wgetMirror: true,
+        },
+        extractors: [],
+        limits: {
+          maxPages: 30,
+          maxDepth: 2,
+          requestDelayMs: 800,
+          maxConcurrency: 1,
+        },
+        scope: "site",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+      setBusy(false);
+    }
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -145,43 +197,36 @@ export default function HomePage() {
             }))
         : [];
 
-      const res = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startUrl: startUrl.trim(),
-          siteType,
-          features: {
-            structure,
-            extract,
-            archive,
-            paymentCapture,
-            markdown,
-            screenshot,
-            polite,
-            sitemapSeed,
-            smartExtract,
-          },
-          extractors,
-          limits: {
-            maxPages,
-            maxDepth,
-            requestDelayMs: polite ? 800 : 0,
-            maxConcurrency: polite ? 1 : siteType === "static" ? 5 : 2,
-          },
-          scope,
-          listLinkSelector: listLinkSelector.trim() || undefined,
-          detailUrlIncludes: detailUrlIncludes
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-          listItemSelector: listItemSelector.trim() || undefined,
-        }),
+      await postJob({
+        startUrl: startUrl.trim(),
+        siteType,
+        features: {
+          structure,
+          extract,
+          archive,
+          paymentCapture,
+          markdown,
+          screenshot,
+          polite,
+          sitemapSeed,
+          smartExtract,
+          wgetMirror,
+        },
+        extractors,
+        limits: {
+          maxPages,
+          maxDepth,
+          requestDelayMs: polite ? 800 : 0,
+          maxConcurrency: polite ? 1 : siteType === "static" ? 5 : 2,
+        },
+        scope,
+        listLinkSelector: listLinkSelector.trim() || undefined,
+        detailUrlIncludes: detailUrlIncludes
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        listItemSelector: listItemSelector.trim() || undefined,
       });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to start job");
-      router.push(`/jobs/${data.job.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
       setBusy(false);
@@ -191,14 +236,38 @@ export default function HomePage() {
   return (
     <div>
       <div className="hero">
-        <h1>참고 사이트를 지도처럼 읽고, 벤치 재료로 뽑기</h1>
+        <h1>URL 한 번으로 구조와 참고 파일을 모으기</h1>
         <p>
-          범용 로컬 크롤러입니다. Crawlee를 엔진으로 유지하고, Firecrawl·Scrapling·Browser Use 식{" "}
-          <strong>능력만</strong> 메뉴로 흡수했습니다 (외부 SaaS/우회/LLM 에이전트 없음).
-          새 프로젝트 IA·카피·UX 참고용 ZIP을 만듭니다.
+          공개 페이지의 정보 구조와 화면 파일을 ZIP으로 묶습니다. 코딩 에이전트는{" "}
+          <strong>ai-brief/GUIDE.md</strong>만 구현 지시로 읽고, HTML·CSS·이미지·폰트는 참고합니다.
+          새 사이트는 라이선스가 자유로운 재료로 처음부터 만듭니다.
         </p>
       </div>
 
+      <form className="card emphasis" onSubmit={onOneClick}>
+        <label className="field">
+          <span>대상 URL</span>
+          <input
+            type="url"
+            required
+            value={startUrl}
+            onChange={(e) => setStartUrl(e.target.value)}
+            placeholder="https://example.com"
+          />
+        </label>
+        <p className="hint">
+          같은 사이트를 최대 30페이지, 깊이 2까지 봅니다. wget으로 화면 파일을 받고, Crawlee로 구조와
+          페이지 정보를 만든 뒤 ZIP으로 받습니다. 동적 페이지라 Playwright Chromium이 필요합니다.
+        </p>
+        <div className="btn-row">
+          <button className="btn" type="submit" disabled={!startUrl.trim() || busy}>
+            {busy ? "시작 중…" : "한 번에 가져오기"}
+          </button>
+        </div>
+        {error && <div className="error-box">{error}</div>}
+      </form>
+
+      <h2 className="section-title">고급 설정</h2>
       <form className="card" onSubmit={onSubmit}>
         <div className="btn-row" style={{ marginBottom: 14 }}>
           <button
@@ -324,6 +393,15 @@ export default function HomePage() {
             />
             G. 스마트 추출
             <span className="check-tag">Scrapling</span>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={wgetMirror}
+              onChange={(e) => setWgetMirror(e.target.checked)}
+            />
+            W. 디자인 파일 미러
+            <span className="check-tag">wget</span>
           </label>
           <label>
             <input
