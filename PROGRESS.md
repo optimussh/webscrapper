@@ -9,6 +9,7 @@
 - Raw HTML/CSS/images stay reference-only (`reference/mirror`, existing `html/` and screenshots). The guide tells coding agents to rebuild from scratch with OFL/Apache fonts and original copy, and not to paste scraped assets.
 - Private and local hosts are rejected before a job starts. wget is used when `wget.exe` is on the machine; otherwise a node page-requisites fallback runs.
 - This is an engineering handoff, not legal advice.
+- Removed the Unsin preset from the home screen. One-click now sends the page-count and depth fields (default 30 / 2, hard cap 200 / 6).
 
 ## 2026-08-09
 

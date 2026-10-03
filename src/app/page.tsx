@@ -34,33 +34,6 @@ const BENCHMARK_PRESET = {
   extractorRows: [] as ExtractorRow[],
 };
 
-const UNSIN_PRESET = {
-  startUrl: "https://www.unsin.co.kr/unse/fortun/submain/result?ca2=37",
-  siteType: "list-detail" as SiteType,
-  structure: true,
-  extract: true,
-  archive: true,
-  paymentCapture: true,
-  markdown: true,
-  screenshot: false,
-  polite: true,
-  sitemapSeed: false,
-  smartExtract: false,
-  wgetMirror: false,
-  maxPages: 25,
-  maxDepth: 2,
-  scope: "site" as CrawlScope,
-  listLinkSelector: ".free-cont a",
-  detailUrlIncludes: "intro.php?cid=",
-  listItemSelector: "",
-  extractorRows: [
-    { name: "title", selector: "h2", attr: "text", multiple: false },
-    { name: "price", selector: "em.price", attr: "text", multiple: false },
-    { name: "sections", selector: "h3", attr: "text", multiple: true },
-    { name: "tags", selector: "a[href*='tag'], .tag, .tags a", attr: "text", multiple: true },
-  ] as ExtractorRow[],
-};
-
 export default function HomePage() {
   const router = useRouter();
   const [startUrl, setStartUrl] = useState(BENCHMARK_PRESET.startUrl);
@@ -113,7 +86,7 @@ export default function HomePage() {
     ],
   );
 
-  function applyPreset(p: typeof BENCHMARK_PRESET | typeof UNSIN_PRESET) {
+  function applyPreset(p: typeof BENCHMARK_PRESET) {
     setStartUrl(p.startUrl);
     setSiteType(p.siteType);
     setStructure(p.structure);
@@ -168,8 +141,8 @@ export default function HomePage() {
         },
         extractors: [],
         limits: {
-          maxPages: 30,
-          maxDepth: 2,
+          maxPages: Math.min(200, Math.max(1, Math.trunc(maxPages) || 1)),
+          maxDepth: Math.min(6, Math.max(0, Math.trunc(maxDepth) || 0)),
           requestDelayMs: 800,
           maxConcurrency: 1,
         },
@@ -255,9 +228,32 @@ export default function HomePage() {
             placeholder="https://example.com"
           />
         </label>
+        <div className="grid-2">
+          <label className="field">
+            <span>최대 페이지 수</span>
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={maxPages}
+              onChange={(e) => setMaxPages(Number(e.target.value))}
+            />
+          </label>
+          <label className="field">
+            <span>최대 깊이</span>
+            <input
+              type="number"
+              min={0}
+              max={6}
+              value={maxDepth}
+              onChange={(e) => setMaxDepth(Number(e.target.value))}
+            />
+          </label>
+        </div>
         <p className="hint">
-          같은 사이트를 최대 30페이지, 깊이 2까지 봅니다. wget으로 화면 파일을 받고, Crawlee로 구조와
-          페이지 정보를 만든 뒤 ZIP으로 받습니다. 동적 페이지라 Playwright Chromium이 필요합니다.
+          기본값은 30페이지, 깊이 2입니다. 이 칸을 바꾸면 한 번에 가져오기에 그대로 적용됩니다.
+          상한은 200페이지, 깊이 6입니다. wget으로 화면 파일을 받고, Crawlee로 구조와 페이지 정보를
+          모읍니다.
         </p>
         <div className="btn-row">
           <button className="btn" type="submit" disabled={!startUrl.trim() || busy}>
@@ -276,13 +272,6 @@ export default function HomePage() {
             onClick={() => applyPreset(BENCHMARK_PRESET)}
           >
             범용 벤치 프리셋
-          </button>
-          <button
-            type="button"
-            className="btn secondary"
-            onClick={() => applyPreset(UNSIN_PRESET)}
-          >
-            운세의 신(짝사랑 목록) 프리셋
           </button>
         </div>
 
@@ -435,7 +424,7 @@ export default function HomePage() {
         </p>
         {paymentCapture && (
           <p className="hint">
-            상품 상세(<code>intro.php?cid=…</code>)마다 결제 UI HTML·스크린샷·폼 구조를 저장합니다.
+            상세 페이지마다 결제 UI HTML·스크린샷·폼 구조를 저장합니다. 결제는 실행하지 않습니다.
           </p>
         )}
         {screenshot && siteType === "static" && (
@@ -492,7 +481,7 @@ export default function HomePage() {
                 type="text"
                 value={detailUrlIncludes}
                 onChange={(e) => setDetailUrlIncludes(e.target.value)}
-                placeholder="/product/, intro.php?cid="
+                placeholder="/product/"
               />
             </label>
             <label className="field">
