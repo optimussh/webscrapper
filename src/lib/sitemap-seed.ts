@@ -5,17 +5,25 @@ import type { CrawlScope } from "./types";
  * Firecrawl-inspired seed expansion: pull URLs from sitemap.xml when available.
  * Best-effort; failures are ignored so crawl still starts from startUrl.
  */
+const MAX_SITEMAP_DOCS = 50;
+
 export async function fetchSitemapSeedUrls(
   startUrl: string,
   scope: CrawlScope,
   maxUrls: number,
 ): Promise<string[]> {
-  const origins = candidateSitemapUrls(startUrl);
-  const found: string[] = [];
-  const seen = new Set<string>();
+  const pages: string[] = [];
+  const seenPages = new Set<string>();
+  const seenDocs = new Set<string>();
+  const queue = candidateSitemapUrls(startUrl);
 
-  for (const smUrl of origins) {
-    if (found.length >= maxUrls) break;
+  while (queue.length && pages.length < maxUrls && seenDocs.size < MAX_SITEMAP_DOCS) {
+    const smUrl = queue.shift()!;
+    const docKey = normalizeUrl(smUrl) || smUrl;
+    if (seenDocs.has(docKey)) continue;
+    seenDocs.add(docKey);
+
+    let text = "";
     try {
       const res = await fetch(smUrl, {
         headers: {
@@ -25,42 +33,34 @@ export async function fetchSitemapSeedUrls(
         signal: AbortSignal.timeout(12000),
       });
       if (!res.ok) continue;
-      const text = await res.text();
-      if (!text.includes("<url") && !text.includes("<sitemap")) continue;
-
-      // sitemap index → nested sitemaps
-      const nested = [...text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi)].map((m) =>
-        m[1].trim(),
-      );
-      const isIndex = /<sitemapindex/i.test(text);
-
-      if (isIndex) {
-        for (const child of nested.slice(0, 5)) {
-          if (found.length >= maxUrls) break;
-          const childUrls = await fetchSitemapSeedUrls(child, scope, maxUrls - found.length);
-          for (const u of childUrls) {
-            if (seen.has(u)) continue;
-            if (!isInScope(startUrl, u, scope) || shouldSkipUrl(u)) continue;
-            seen.add(u);
-            found.push(u);
-          }
-        }
-      } else {
-        for (const loc of nested) {
-          if (found.length >= maxUrls) break;
-          const abs = normalizeUrl(loc, startUrl) || loc;
-          if (seen.has(abs)) continue;
-          if (!isInScope(startUrl, abs, scope) || shouldSkipUrl(abs)) continue;
-          seen.add(abs);
-          found.push(abs);
-        }
-      }
+      text = await res.text();
     } catch {
-      /* try next candidate */
+      continue;
+    }
+    if (!text.includes("<url") && !text.includes("<sitemap")) continue;
+
+    const locs = [...text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi)].map((match) =>
+      match[1].trim(),
+    );
+    if (/<sitemapindex/i.test(text)) {
+      for (const loc of locs) {
+        const child = normalizeUrl(loc, smUrl) || loc;
+        if (!seenDocs.has(child)) queue.push(child);
+      }
+      continue;
+    }
+
+    for (const loc of locs) {
+      if (pages.length >= maxUrls) break;
+      const abs = normalizeUrl(loc, startUrl) || loc;
+      if (seenPages.has(abs)) continue;
+      if (!isInScope(startUrl, abs, scope) || shouldSkipUrl(abs)) continue;
+      seenPages.add(abs);
+      pages.push(abs);
     }
   }
 
-  return found;
+  return pages;
 }
 
 function candidateSitemapUrls(startUrl: string): string[] {

@@ -23,6 +23,7 @@ type Artifacts = {
   brief?: AiBrief;
   guide?: string;
   mirror?: MirrorReport;
+  storagePath?: string;
 };
 
 function renderTree(node: SitemapNode, prefix = ""): string {
@@ -122,7 +123,20 @@ export default function JobPage() {
                 오류: {meta.error}
               </>
             )}
+            {data?.storagePath && (
+              <>
+                <br />
+                저장 위치: <code>{data.storagePath}</code>
+              </>
+            )}
           </p>
+          {meta.progress.pagesCrawled >= meta.input.limits.maxPages && (
+            <p className="hint">
+              이 작업은 페이지 상한 {meta.input.limits.maxPages}에서 멈춥니다. 나머지를 보려면
+              홈에서 페이지 수를 더 올리고 같은 주소를 다시 실행하세요. 이미 돌고 있는 작업의
+              상한은 도중에 바뀌지 않습니다.
+            </p>
+          )}
           <div className="btn-row">
             <a className="btn" href={`/api/jobs/${jobId}/zip`}>
               ZIP 다운로드

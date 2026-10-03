@@ -2,12 +2,14 @@ import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import { assertPublicHttpUrl } from "./public-url";
+import { HARD_MAX_DEPTH, HARD_MAX_PAGES } from "./limits";
 import type {
   AiBrief,
   BenchmarkRecipe,
   CreateJobInput,
   ExtractedPage,
   JobLimits,
+  JobListItem,
   JobMeta,
   JobSummary,
   MirrorReport,
@@ -22,9 +24,6 @@ const DEFAULT_LIMITS: JobLimits = {
   requestDelayMs: 800,
   maxConcurrency: 1,
 };
-
-const HARD_MAX_PAGES = 200;
-const HARD_MAX_DEPTH = 6;
 
 export function getJobsRoot(): string {
   return process.env.JOBS_DIR
@@ -110,6 +109,31 @@ export async function createJob(input: CreateJobInput): Promise<JobMeta> {
   await fs.mkdir(path.join(dir, "screenshots"), { recursive: true });
   await writeJson(path.join(dir, "meta.json"), meta);
   return meta;
+}
+
+export async function listJobs(): Promise<JobListItem[]> {
+  await ensureJobsRoot();
+  const entries = await fs.readdir(getJobsRoot(), { withFileTypes: true });
+  const items: JobListItem[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const meta = await readJob(entry.name);
+    if (!meta) continue;
+    items.push({
+      id: meta.id,
+      status: meta.status,
+      startUrl: meta.input.startUrl,
+      siteType: meta.input.siteType,
+      createdAt: meta.createdAt,
+      updatedAt: meta.updatedAt,
+      pagesCrawled: meta.progress.pagesCrawled,
+      maxPages: meta.input.limits.maxPages,
+      message: meta.progress.message ?? "",
+      storagePath: jobDir(meta.id),
+    });
+  }
+  items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return items;
 }
 
 export async function readJob(jobId: string): Promise<JobMeta | null> {
@@ -380,6 +404,7 @@ export async function loadJobArtifacts(jobId: string): Promise<{
   brief?: AiBrief;
   guide?: string;
   mirror?: MirrorReport;
+  storagePath: string;
 }> {
   const meta = await readJob(jobId);
   if (!meta) throw new Error("Job not found");
@@ -411,5 +436,6 @@ export async function loadJobArtifacts(jobId: string): Promise<{
     brief: await readOptional<AiBrief>("ai-brief/brief.json"),
     guide,
     mirror: await readOptional<MirrorReport>("reference/mirror/report.json"),
+    storagePath: dir,
   };
 }

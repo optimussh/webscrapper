@@ -1,8 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { CrawlScope, Extractor, SiteType } from "../lib/types";
+import { HARD_MAX_DEPTH, HARD_MAX_PAGES } from "../lib/limits";
+import type { CrawlScope, Extractor, JobListItem, SiteType } from "../lib/types";
+
+function formatWhen(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
 
 type ExtractorRow = {
   name: string;
@@ -57,8 +69,29 @@ export default function HomePage() {
   const [extractorRows, setExtractorRows] = useState<ExtractorRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<JobListItem[]>([]);
 
   const showListDetail = siteType === "list-detail";
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadHistory() {
+      try {
+        const res = await fetch("/api/jobs", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { jobs?: JobListItem[] };
+        if (!cancelled) setHistory(json.jobs ?? []);
+      } catch {
+        // History is optional while a crawl is running.
+      }
+    }
+    void loadHistory();
+    const timer = setInterval(() => void loadHistory(), 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   const canSubmit = useMemo(
     () =>
@@ -141,8 +174,8 @@ export default function HomePage() {
         },
         extractors: [],
         limits: {
-          maxPages: Math.min(200, Math.max(1, Math.trunc(maxPages) || 1)),
-          maxDepth: Math.min(6, Math.max(0, Math.trunc(maxDepth) || 0)),
+          maxPages: Math.min(HARD_MAX_PAGES, Math.max(1, Math.trunc(maxPages) || 1)),
+          maxDepth: Math.min(HARD_MAX_DEPTH, Math.max(0, Math.trunc(maxDepth) || 0)),
           requestDelayMs: 800,
           maxConcurrency: 1,
         },
@@ -234,7 +267,7 @@ export default function HomePage() {
             <input
               type="number"
               min={1}
-              max={200}
+              max={HARD_MAX_PAGES}
               value={maxPages}
               onChange={(e) => setMaxPages(Number(e.target.value))}
             />
@@ -244,7 +277,7 @@ export default function HomePage() {
             <input
               type="number"
               min={0}
-              max={6}
+              max={HARD_MAX_DEPTH}
               value={maxDepth}
               onChange={(e) => setMaxDepth(Number(e.target.value))}
             />
@@ -252,8 +285,8 @@ export default function HomePage() {
         </div>
         <p className="hint">
           기본값은 30페이지, 깊이 2입니다. 이 칸을 바꾸면 한 번에 가져오기에 그대로 적용됩니다.
-          상한은 200페이지, 깊이 6입니다. wget으로 화면 파일을 받고, Crawlee로 구조와 페이지 정보를
-          모읍니다.
+          상한은 {HARD_MAX_PAGES}페이지, 깊이 {HARD_MAX_DEPTH}입니다. 이미 시작된 작업의 상한은
+          바뀌지 않습니다. 스크린샷을 켠 채 페이지를 많이 받으면 시간과 디스크를 많이 씁니다.
         </p>
         <div className="btn-row">
           <button className="btn" type="submit" disabled={!startUrl.trim() || busy}>
@@ -262,6 +295,50 @@ export default function HomePage() {
         </div>
         {error && <div className="error-box">{error}</div>}
       </form>
+
+      <h2 className="section-title">지난 크롤</h2>
+      {history.length === 0 ? (
+        <p className="hint">아직 저장된 크롤이 없습니다.</p>
+      ) : (
+        <div className="table-wrap card" style={{ padding: 0 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>시각</th>
+                <th>대상</th>
+                <th>상태</th>
+                <th>페이지</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((job) => (
+                <tr key={job.id}>
+                  <td>{formatWhen(job.createdAt)}</td>
+                  <td>
+                    <code style={{ fontSize: 12 }}>{job.startUrl}</code>
+                  </td>
+                  <td>
+                    <span className={`status-pill ${job.status}`}>{job.status}</span>
+                  </td>
+                  <td>
+                    {job.pagesCrawled}/{job.maxPages}
+                  </td>
+                  <td>
+                    <a href={`/jobs/${job.id}`}>열기</a>
+                    {" · "}
+                    <a href={`/api/jobs/${job.id}/zip`}>ZIP</a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="hint">
+        결과 파일은 이 컴퓨터의 <code>data/jobs/작업ID</code> 폴더에 남습니다. 브라우저를 닫아도
+        여기 목록에서 다시 열 수 있습니다.
+      </p>
 
       <h2 className="section-title">고급 설정</h2>
       <form className="card" onSubmit={onSubmit}>
@@ -439,7 +516,7 @@ export default function HomePage() {
             <input
               type="number"
               min={1}
-              max={200}
+              max={HARD_MAX_PAGES}
               value={maxPages}
               onChange={(e) => setMaxPages(Number(e.target.value))}
             />
@@ -449,7 +526,7 @@ export default function HomePage() {
             <input
               type="number"
               min={0}
-              max={6}
+              max={HARD_MAX_DEPTH}
               value={maxDepth}
               onChange={(e) => setMaxDepth(Number(e.target.value))}
             />

@@ -10,6 +10,7 @@
 - Private and local hosts are rejected before a job starts. wget is used when `wget.exe` is on the machine; otherwise a node page-requisites fallback runs.
 - This is an engineering handoff, not legal advice.
 - Removed the Unsin preset from the home screen. One-click now sends the page-count and depth fields (default 30 / 2, hard cap 200 / 6).
+- Raised the hard cap to 5000 pages and depth 12. Sitemap seeds follow child sitemaps up to that page cap. Home lists past jobs from `data/jobs/<id>`. A running job keeps the limit it started with.
 
 ## 2026-08-09
 

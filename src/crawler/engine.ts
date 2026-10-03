@@ -470,7 +470,7 @@ async function seedQueue(
     },
   });
 
-  const seeds = await fetchSitemapSeedUrls(startUrl, scope, Math.min(maxPages, 80));
+  const seeds = await fetchSitemapSeedUrls(startUrl, scope, maxPages);
   let added = 0;
   for (const url of seeds) {
     if (url === startUrl) continue;

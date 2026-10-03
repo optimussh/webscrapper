@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createJob } from "../../../lib/jobs";
+import { createJob, listJobs } from "../../../lib/jobs";
 import { spawnCrawlJob } from "../../../lib/spawn-job";
 import type { CreateJobInput, SiteType } from "../../../lib/types";
 
@@ -7,6 +7,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SITE_TYPES: SiteType[] = ["static", "dynamic", "list-detail"];
+
+export async function GET() {
+  const jobs = await listJobs();
+  return NextResponse.json({ jobs });
+}
 
 export async function POST(req: Request) {
   try {

@@ -85,6 +85,19 @@ export type CreateJobInput = {
 
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 
+export type JobListItem = {
+  id: string;
+  status: JobStatus;
+  startUrl: string;
+  siteType: SiteType;
+  createdAt: string;
+  updatedAt: string;
+  pagesCrawled: number;
+  maxPages: number;
+  message: string;
+  storagePath: string;
+};
+
 export type JobMeta = {
   id: string;
   createdAt: string;
