@@ -504,8 +504,21 @@ export async function loadJobArtifacts(jobId: string): Promise<{
   storagePath: string;
   workerAlive: boolean;
 }> {
-  const meta = await readJob(jobId);
+  let meta = await readJob(jobId);
   if (!meta) throw new Error("Job not found");
+
+  const workerAlive = await isWorkerAlive(jobId, meta.updatedAt);
+  if (!workerAlive && (meta.status === "running" || meta.status === "queued")) {
+    const pages = await readPages(jobId);
+    if (pages.length > 0 && pages.length >= (meta.input.limits.maxPages - 10)) {
+      try {
+        const { finalizeJob } = await import("../crawler/engine");
+        meta = await finalizeJob(jobId);
+      } catch (finalizeErr) {
+        console.error("Auto-finalize failed:", finalizeErr);
+      }
+    }
+  }
 
   const dir = jobDir(jobId);
   const readOptional = async <T>(name: string): Promise<T | undefined> => {

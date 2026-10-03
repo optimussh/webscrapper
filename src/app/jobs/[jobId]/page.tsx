@@ -48,6 +48,7 @@ export default function JobPage() {
   const [nextPages, setNextPages] = useState(HARD_MAX_PAGES);
   const [nextDepth, setNextDepth] = useState(2);
   const [continuing, setContinuing] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
   const [loadedFor, setLoadedFor] = useState(jobId);
 
   if (loadedFor !== jobId) {
@@ -56,6 +57,7 @@ export default function JobPage() {
     setError(null);
     setSeededFor(null);
     setContinuing(false);
+    setFinalizing(false);
   }
 
   useEffect(() => {
@@ -126,6 +128,22 @@ export default function JobPage() {
       setError(err instanceof Error ? err.message : "Continue failed");
     }
   }
+
+  async function onFinalize() {
+    setFinalizing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/finalize`, { method: "POST" });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || "Finalize failed");
+      setWatch((n) => n + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Finalize failed");
+    } finally {
+      setFinalizing(false);
+    }
+  }
+
   const progressPct = useMemo(() => {
     if (!meta) return 0;
     const max = meta.input.limits.maxPages || 1;
@@ -255,6 +273,16 @@ export default function JobPage() {
                   >
                     상한을 올려 이어서 크롤
                   </button>
+                  {meta.status !== "completed" && pages.length > 0 && (
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      disabled={finalizing}
+                      onClick={onFinalize}
+                    >
+                      {finalizing ? "완료 처리 중…" : "현재 수집본으로 작업 완료"}
+                    </button>
+                  )}
                 </div>
               </form>
             )}

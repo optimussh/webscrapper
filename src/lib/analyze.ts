@@ -304,33 +304,52 @@ export function buildSitemap(
     }
   }
 
-  const visiting = new Set<string>();
+  const root = byUrl.has(startUrl)
+    ? startUrl
+    : pages[0]?.url || startUrl;
 
-  function nodeFor(url: string): import("./types").SitemapNode {
+  const visited = new Set<string>([root]);
+
+  function nodeFor(url: string, depth = 0): import("./types").SitemapNode {
     const page = byUrl.get(url);
     const title = page?.title || url;
-    if (visiting.has(url)) {
+    if (depth >= 6) {
       return { url, title, children: [] };
     }
-    visiting.add(url);
-    const childUrls = [...(childrenMap.get(url) ?? [])].filter((c) => c !== url);
+    const childUrls = [...(childrenMap.get(url) ?? [])].filter(
+      (c) => c !== url && !visited.has(c),
+    );
     // Prefer fewer children in tree: only include links that look like deeper paths
     const startDepth = pathSegs(startUrl);
     const sorted = childUrls
       .filter((c) => pathSegs(c) >= startDepth)
       .sort((a, b) => pathSegs(a) - pathSegs(b) || a.localeCompare(b))
-      .slice(0, 40);
+      .slice(0, 30);
 
-    const children = sorted.map((c) => nodeFor(c));
-    visiting.delete(url);
+    for (const c of sorted) {
+      visited.add(c);
+    }
+
+    const children = sorted.map((c) => nodeFor(c, depth + 1));
     return { url, title, children };
   }
 
-  const root = byUrl.has(startUrl)
-    ? startUrl
-    : pages[0]?.url || startUrl;
+  const rootNode = nodeFor(root);
 
-  return nodeFor(root);
+  // Attach any unplaced pages under root (up to 100) so no discovered sections are lost
+  const unplaced = pages.filter((p) => !visited.has(p.url));
+  if (unplaced.length && rootNode.children) {
+    for (const p of unplaced.slice(0, 100)) {
+      visited.add(p.url);
+      rootNode.children.push({
+        url: p.url,
+        title: p.title || p.url,
+        children: [],
+      });
+    }
+  }
+
+  return rootNode;
 }
 
 function pathSegs(url: string): number {

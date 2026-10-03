@@ -12,6 +12,7 @@ import {
 } from "../lib/analyze";
 import { writeAiBrief } from "../lib/ai-brief";
 import {
+  clearWorkerPid,
   jobDir,
   readExtract,
   readJob,
@@ -260,8 +261,17 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       await savePages(jobId, pages);
     }
 
-    const sitemap = buildSitemap(pages, startUrl);
-    await saveSitemap(jobId, sitemap);
+    try {
+      const sitemap = buildSitemap(pages, startUrl);
+      await saveSitemap(jobId, sitemap);
+    } catch (sitemapErr) {
+      console.error("buildSitemap failed, fallback to flat sitemap", sitemapErr);
+      await saveSitemap(jobId, {
+        url: startUrl,
+        title: pages[0]?.title || startUrl,
+        children: pages.slice(0, 100).map((p) => ({ url: p.url, title: p.title || p.url, children: [] })),
+      });
+    }
     await savePages(jobId, pages);
     if (doExtract) await saveExtract(jobId, extracts);
 
@@ -403,7 +413,11 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     });
     if (pages.length) {
       await savePages(jobId, pages);
-      await saveSitemap(jobId, buildSitemap(pages, startUrl));
+      try {
+        await saveSitemap(jobId, buildSitemap(pages, startUrl));
+      } catch {
+        /* ignore sitemap fallback error */
+      }
       try {
         await writeAiBrief(jobDir(jobId), {
           startUrl,
@@ -416,6 +430,98 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     }
     throw err;
   }
+}
+
+export async function finalizeJob(jobId: string): Promise<JobMeta> {
+  const meta = await readJob(jobId);
+  if (!meta) throw new Error(`Job not found: ${jobId}`);
+
+  const pages = await readPages(jobId);
+  const extracts = await readExtract(jobId);
+  const { input } = meta;
+  const startUrl = normalizeUrl(input.startUrl) || input.startUrl;
+
+  try {
+    const sitemap = buildSitemap(pages, startUrl);
+    await saveSitemap(jobId, sitemap);
+  } catch (err) {
+    console.error("buildSitemap failed in finalizeJob, fallback", err);
+    await saveSitemap(jobId, {
+      url: startUrl,
+      title: pages[0]?.title || startUrl,
+      children: pages.slice(0, 100).map((p) => ({ url: p.url, title: p.title || p.url, children: [] })),
+    });
+  }
+
+  const markdownIndex = pages
+    .filter((page) => page.markdownFile)
+    .map((page) => ({ url: page.url, title: page.title, file: page.markdownFile! }));
+  const screenshotIndex = pages
+    .filter((page) => page.screenshotFile)
+    .map((page) => ({ url: page.url, title: page.title, file: page.screenshotFile! }));
+  if (markdownIndex.length) await saveMarkdownIndex(jobId, markdownIndex);
+  if (screenshotIndex.length) await saveScreenshotIndex(jobId, screenshotIndex);
+
+  let mirror = await readMirrorReport(jobId);
+  let aiBrief = false;
+  try {
+    await writeAiBrief(jobDir(jobId), {
+      startUrl,
+      siteType: input.siteType,
+      pages,
+      mirror,
+    });
+    aiBrief = true;
+  } catch (briefErr) {
+    console.error("ai brief failed in finalizeJob", briefErr);
+  }
+
+  await saveSummary(jobId, {
+    id: jobId,
+    startUrl,
+    siteType: input.siteType,
+    features: input.features,
+    pagesCrawled: pages.length,
+    completedAt: new Date().toISOString(),
+    durationMs: 0,
+    markdownCount: markdownIndex.length,
+    screenshotCount: screenshotIndex.length,
+    mirrorFiles: mirror?.files,
+    mirrorBytes: mirror?.bytes,
+    mirrorEngine: mirror?.engine,
+    aiBrief,
+  });
+
+  if (input.features.archive) {
+    const byUrl = new Map(
+      extracts.map((e) => [
+        e.url,
+        {
+          title: (typeof e.data.title === "string" && e.data.title) || undefined,
+          price: (typeof e.data.price === "string" && e.data.price) || undefined,
+        },
+      ]),
+    );
+    await saveArchiveIndex(
+      jobId,
+      pages.map((p) => ({
+        url: p.url,
+        title: byUrl.get(p.url)?.title || p.title,
+        price: byUrl.get(p.url)?.price,
+      })),
+    );
+  }
+
+  await clearWorkerPid(jobId);
+
+  return await updateJob(jobId, {
+    status: "completed",
+    progress: {
+      pagesCrawled: pages.length,
+      pagesEnqueued: pages.length,
+      message: `Done — ${pages.length} pages`,
+    },
+  });
 }
 
 async function readMirrorReport(jobId: string): Promise<MirrorReport | undefined> {

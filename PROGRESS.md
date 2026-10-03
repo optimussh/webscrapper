@@ -2,6 +2,15 @@
 
 ## 2026-10-03
 
+### Sitemap cycle fix & auto-finalization recovery
+
+- Fixed combinatorial explosion in `buildSitemap` (`src/lib/analyze.ts`) by introducing a global visited set and depth cap (max depth 6, max 30 children/node). Traversal time dropped from infinite/OOM to ~15ms.
+- Added `finalizeJob` (`src/crawler/engine.ts`) to reliably generate sitemap, markdown/screenshot indexes, AI brief, and summary from saved pages.
+- Added `POST /api/jobs/[jobId]/finalize` endpoint (`src/app/api/jobs/[jobId]/finalize/route.ts`) and a manual "현재 수집본으로 작업 완료" button in UI (`src/app/jobs/[jobId]/page.tsx`).
+- Added automatic recovery in `loadJobArtifacts` (`src/lib/jobs.ts`) to auto-finalize jobs if the worker died after completing the target crawl budget.
+- Added fallback error handling around `buildSitemap` in crawl engine.
+
+
 ### Reference mirror and AI brief
 
 - One-click capture: public URL, same-site crawl (30 pages / depth 2), GNU wget page-requisites, ZIP.
