@@ -25,6 +25,7 @@ type Artifacts = {
   guide?: string;
   mirror?: MirrorReport;
   storagePath?: string;
+  workerAlive?: boolean;
 };
 
 function renderTree(node: SitemapNode, prefix = ""): string {
@@ -132,6 +133,15 @@ export default function JobPage() {
   }, [meta]);
 
   const selected = pages.find((p) => p.url === selectedUrl) || pages[0];
+  const stalled =
+    !!meta &&
+    (meta.status === "running" || meta.status === "queued") &&
+    data?.workerAlive === false;
+  const canContinue =
+    !!meta &&
+    !continuing &&
+    meta.progress.pagesCrawled < HARD_MAX_PAGES &&
+    (meta.status === "completed" || meta.status === "failed" || stalled);
 
   return (
     <div>
@@ -147,7 +157,9 @@ export default function JobPage() {
       {meta && (
         <div className="card">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-            <span className={`status-pill ${meta.status}`}>{meta.status}</span>
+            <span className={`status-pill ${stalled ? "stopped" : meta.status}`}>
+              {stalled ? "멈춤" : meta.status}
+            </span>
             <span className="meta-line" style={{ margin: 0 }}>
               {meta.progress.message}
             </span>
@@ -179,22 +191,26 @@ export default function JobPage() {
               </>
             )}
           </p>
-          {(meta.status === "queued" || meta.status === "running" || continuing) && (
+          {(meta.status === "queued" || meta.status === "running" || continuing) &&
+            !stalled && (
             <p className="hint">
-              진행 중인 작업의 상한은 도중에 바꿀 수 없습니다. 끝나거나 실패한 뒤 이 화면에서
-              저장한 페이지는 그대로 두고 이어서 받을 수 있습니다.
+              진행 중인 작업의 상한은 도중에 바꿀 수 없습니다. 프로세스가 끝나거나 멈춘 뒤
+              이 화면에서 저장한 페이지는 그대로 두고 이어서 받을 수 있습니다.
             </p>
           )}
-          {(meta.status === "completed" || meta.status === "failed") &&
-            !continuing &&
-            meta.progress.pagesCrawled >= HARD_MAX_PAGES && (
+          {stalled && (
+            <p className="hint">
+              이 작업은 {meta.progress.pagesCrawled}/{meta.input.limits.maxPages}에서
+              멈췄고, 돌리던 프로세스는 없습니다. 아래에서 상한을 올리면 저장한 페이지는
+              유지한 채 이어서 받습니다.
+            </p>
+          )}
+          {!continuing && meta.progress.pagesCrawled >= HARD_MAX_PAGES && (
               <p className="hint">
                 이 작업은 페이지 상한 {HARD_MAX_PAGES}에 도달했습니다.
               </p>
             )}
-          {(meta.status === "completed" || meta.status === "failed") &&
-            !continuing &&
-            meta.progress.pagesCrawled < HARD_MAX_PAGES && (
+          {canContinue && (
               <form onSubmit={onContinue}>
                 <div className="grid-2">
                   <label className="field">

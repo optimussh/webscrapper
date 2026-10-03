@@ -156,9 +156,42 @@ export async function readExtract(jobId: string): Promise<ExtractedPage[]> {
   }
 }
 
+const STALE_WORKER_MS = 90_000;
+
+export async function writeWorkerPid(jobId: string, pid: number): Promise<void> {
+  await writeJson(path.join(jobDir(jobId), "worker.json"), { pid });
+}
+
+export async function clearWorkerPid(jobId: string): Promise<void> {
+  await fs.rm(path.join(jobDir(jobId), "worker.json"), { force: true });
+}
+
+function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when a crawl process is still running, or one was just queued and has not recorded a pid yet. */
+export async function isWorkerAlive(jobId: string, updatedAt: string): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(path.join(jobDir(jobId), "worker.json"), "utf8");
+    const pid = Number((JSON.parse(raw) as { pid?: number }).pid);
+    return pidAlive(pid);
+  } catch {
+    const age = Date.now() - Date.parse(updatedAt);
+    return Number.isFinite(age) && age >= 0 && age < STALE_WORKER_MS;
+  }
+}
+
 /**
- * Raise the page cap on a finished job and queue another pass.
+ * Raise the page cap and queue another pass on the same job.
  * Saved pages stay; the worker fetches URLs it has not stored yet.
+ * A running status with no live process can continue too.
  */
 export async function continueJob(
   jobId: string,
@@ -166,7 +199,10 @@ export async function continueJob(
 ): Promise<JobMeta> {
   const current = await readJob(jobId);
   if (!current) throw new Error("Job not found");
-  if (current.status === "running" || current.status === "queued") {
+  if (
+    (current.status === "running" || current.status === "queued") &&
+    (await isWorkerAlive(jobId, current.updatedAt))
+  ) {
     throw new Error("Job is already running");
   }
   if (!Number.isFinite(limits.maxPages)) throw new Error("maxPages is required");
@@ -466,6 +502,7 @@ export async function loadJobArtifacts(jobId: string): Promise<{
   guide?: string;
   mirror?: MirrorReport;
   storagePath: string;
+  workerAlive: boolean;
 }> {
   const meta = await readJob(jobId);
   if (!meta) throw new Error("Job not found");
@@ -498,5 +535,6 @@ export async function loadJobArtifacts(jobId: string): Promise<{
     guide,
     mirror: await readOptional<MirrorReport>("reference/mirror/report.json"),
     storagePath: dir,
+    workerAlive: await isWorkerAlive(jobId, meta.updatedAt),
   };
 }

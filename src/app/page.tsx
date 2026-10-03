@@ -285,9 +285,10 @@ export default function HomePage() {
         </div>
         <p className="hint">
           기본값은 30페이지, 깊이 2입니다. 이 칸을 바꾸면 한 번에 가져오기에 그대로 적용됩니다.
-          상한은 {HARD_MAX_PAGES}페이지, 깊이 {HARD_MAX_DEPTH}입니다. 진행 중인 작업의 상한은
-          도중에 바뀌지 않습니다. 끝난 작업은 지난 크롤에서 열어 상한을 올리고 이어서 받을 수
-          있습니다. 스크린샷을 켠 채 페이지를 많이 받으면 시간과 디스크를 많이 씁니다.
+          상한은 {HARD_MAX_PAGES}페이지, 깊이 {HARD_MAX_DEPTH}입니다. 실제로 돌아가는 중인
+          작업의 상한은 도중에 바뀌지 않습니다. 끝났거나 화면만 running으로 남은 작업은 지난
+          크롤에서 열어 상한을 올리고 이어서 받을 수 있습니다. 스크린샷을 켠 채 페이지를 많이
+          받으면 시간과 디스크를 많이 씁니다.
         </p>
         <div className="btn-row">
           <button className="btn" type="submit" disabled={!startUrl.trim() || busy}>

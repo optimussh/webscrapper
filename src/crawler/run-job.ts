@@ -2,6 +2,7 @@
  * CLI entry: npx tsx src/crawler/run-job.ts <jobId>
  * Runs outside the Next.js request lifecycle so long crawls survive.
  */
+import { clearWorkerPid } from "../lib/jobs";
 import { runCrawlJob } from "./engine";
 
 async function main() {
@@ -13,9 +14,11 @@ async function main() {
 
   try {
     await runCrawlJob(jobId);
+    await clearWorkerPid(jobId);
     process.exit(0);
   } catch (err) {
     console.error(err);
+    await clearWorkerPid(jobId);
     process.exit(1);
   }
 }

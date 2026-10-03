@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import path from "path";
+import { writeWorkerPid } from "./jobs";
 
 /**
  * Start crawl worker as a detached child so the HTTP request can return immediately.
@@ -25,6 +26,10 @@ export function spawnCrawlJob(jobId: string): void {
   child.on("error", (err) => {
     console.error("[spawnCrawlJob] failed to start worker:", err);
   });
+
+  if (typeof child.pid === "number") {
+    void writeWorkerPid(jobId, child.pid);
+  }
 
   if (!isWin) {
     child.unref();

@@ -28,6 +28,7 @@ import {
   saveSitemap,
   saveSummary,
   updateJob,
+  writeWorkerPid,
 } from "../lib/jobs";
 import { captureDesignMirror } from "../lib/wget-mirror";
 import { htmlToMarkdown } from "../lib/markdown";
@@ -76,6 +77,7 @@ async function politePause(meta: JobMeta): Promise<void> {
 export async function runCrawlJob(jobId: string): Promise<void> {
   const meta = await readJob(jobId);
   if (!meta) throw new Error(`Job not found: ${jobId}`);
+  await writeWorkerPid(jobId, process.pid);
 
   const started = Date.now();
   const resume = !!meta.resume;

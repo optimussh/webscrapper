@@ -328,7 +328,8 @@ textarea {
   color: var(--good);
 }
 
-.status-pill.failed {
+.status-pill.failed,
+.status-pill.stopped {
   background: rgba(248, 113, 113, 0.15);
   color: var(--bad);
 }
