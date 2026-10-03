@@ -136,6 +136,67 @@ export async function listJobs(): Promise<JobListItem[]> {
   return items;
 }
 
+export async function readPages(jobId: string): Promise<PageStructure[]> {
+  try {
+    const raw = await fs.readFile(path.join(jobDir(jobId), "pages.json"), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as PageStructure[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function readExtract(jobId: string): Promise<ExtractedPage[]> {
+  try {
+    const raw = await fs.readFile(path.join(jobDir(jobId), "extract.json"), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as ExtractedPage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Raise the page cap on a finished job and queue another pass.
+ * Saved pages stay; the worker fetches URLs it has not stored yet.
+ */
+export async function continueJob(
+  jobId: string,
+  limits: Partial<JobLimits>,
+): Promise<JobMeta> {
+  const current = await readJob(jobId);
+  if (!current) throw new Error("Job not found");
+  if (current.status === "running" || current.status === "queued") {
+    throw new Error("Job is already running");
+  }
+  if (!Number.isFinite(limits.maxPages)) throw new Error("maxPages is required");
+
+  const saved = await readPages(jobId);
+  const nextLimits = clampLimits({
+    ...current.input.limits,
+    maxPages: limits.maxPages,
+    maxDepth: limits.maxDepth ?? current.input.limits.maxDepth,
+  });
+  if (nextLimits.maxPages <= saved.length) {
+    throw new Error(`maxPages must be greater than ${saved.length}`);
+  }
+
+  return updateJob(jobId, {
+    status: "queued",
+    resume: true,
+    error: undefined,
+    input: {
+      ...current.input,
+      limits: nextLimits,
+    },
+    progress: {
+      pagesCrawled: saved.length,
+      pagesEnqueued: saved.length,
+      message: `Queued to continue from ${saved.length} pages`,
+    },
+  });
+}
+
 export async function readJob(jobId: string): Promise<JobMeta | null> {
   try {
     const raw = await fs.readFile(path.join(jobDir(jobId), "meta.json"), "utf8");

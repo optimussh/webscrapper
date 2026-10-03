@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useParams } from "next/navigation";
+import { HARD_MAX_DEPTH, HARD_MAX_PAGES } from "../../../lib/limits";
 import type {
   AiBrief,
   ExtractedPage,
@@ -41,6 +42,20 @@ export default function JobPage() {
   const [data, setData] = useState<Artifacts | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
+  const [watch, setWatch] = useState(0);
+  const [seededFor, setSeededFor] = useState<string | null>(null);
+  const [nextPages, setNextPages] = useState(HARD_MAX_PAGES);
+  const [nextDepth, setNextDepth] = useState(2);
+  const [continuing, setContinuing] = useState(false);
+  const [loadedFor, setLoadedFor] = useState(jobId);
+
+  if (loadedFor !== jobId) {
+    setLoadedFor(jobId);
+    setData(null);
+    setError(null);
+    setSeededFor(null);
+    setContinuing(false);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +71,7 @@ export default function JobPage() {
           setError(null);
           const status = json.meta?.status as string;
           if (status === "queued" || status === "running") {
+            setContinuing(false);
             timer = setTimeout(poll, 1500);
           }
         }
@@ -72,10 +88,43 @@ export default function JobPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [jobId]);
+  }, [jobId, watch]);
 
   const pages = data?.pages ?? [];
   const meta = data?.meta;
+
+  useEffect(() => {
+    if (!meta || seededFor === jobId) return;
+    const crawled = meta.progress.pagesCrawled;
+    setNextPages(
+      Math.min(
+        HARD_MAX_PAGES,
+        Math.max(meta.input.limits.maxPages + 300, crawled + 50),
+      ),
+    );
+    setNextDepth(meta.input.limits.maxDepth);
+    setSeededFor(jobId);
+  }, [meta, jobId, seededFor]);
+
+  async function onContinue(event: FormEvent) {
+    event.preventDefault();
+    if (!meta) return;
+    setContinuing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/continue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxPages: nextPages, maxDepth: nextDepth }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || "Continue failed");
+      setWatch((n) => n + 1);
+    } catch (err) {
+      setContinuing(false);
+      setError(err instanceof Error ? err.message : "Continue failed");
+    }
+  }
   const progressPct = useMemo(() => {
     if (!meta) return 0;
     const max = meta.input.limits.maxPages || 1;
@@ -130,13 +179,69 @@ export default function JobPage() {
               </>
             )}
           </p>
-          {meta.progress.pagesCrawled >= meta.input.limits.maxPages && (
+          {(meta.status === "queued" || meta.status === "running" || continuing) && (
             <p className="hint">
-              이 작업은 페이지 상한 {meta.input.limits.maxPages}에서 멈춥니다. 나머지를 보려면
-              홈에서 페이지 수를 더 올리고 같은 주소를 다시 실행하세요. 이미 돌고 있는 작업의
-              상한은 도중에 바뀌지 않습니다.
+              진행 중인 작업의 상한은 도중에 바꿀 수 없습니다. 끝나거나 실패한 뒤 이 화면에서
+              저장한 페이지는 그대로 두고 이어서 받을 수 있습니다.
             </p>
           )}
+          {(meta.status === "completed" || meta.status === "failed") &&
+            !continuing &&
+            meta.progress.pagesCrawled >= HARD_MAX_PAGES && (
+              <p className="hint">
+                이 작업은 페이지 상한 {HARD_MAX_PAGES}에 도달했습니다.
+              </p>
+            )}
+          {(meta.status === "completed" || meta.status === "failed") &&
+            !continuing &&
+            meta.progress.pagesCrawled < HARD_MAX_PAGES && (
+              <form onSubmit={onContinue}>
+                <div className="grid-2">
+                  <label className="field">
+                    <span>이어서 받을 페이지 상한</span>
+                    <input
+                      type="number"
+                      min={meta.progress.pagesCrawled + 1}
+                      max={HARD_MAX_PAGES}
+                      value={nextPages}
+                      onChange={(e) => setNextPages(Number(e.target.value))}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>최대 깊이</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={HARD_MAX_DEPTH}
+                      value={nextDepth}
+                      onChange={(e) => setNextDepth(Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+                <p className="hint">
+                  이미 저장한 {meta.progress.pagesCrawled}페이지는 다시 받지 않습니다. 그
+                  페이지의 링크와 사이트맵에서 새 주소만 이어서 받습니다. 상한은 저장한
+                  페이지 수보다 커야 하고, 최대 {HARD_MAX_PAGES}페이지, 깊이 {HARD_MAX_DEPTH}
+                  입니다.
+                </p>
+                <div className="btn-row">
+                  <button
+                    className="btn"
+                    type="submit"
+                    disabled={
+                      !Number.isFinite(nextPages) ||
+                      nextPages <= meta.progress.pagesCrawled ||
+                      nextPages > HARD_MAX_PAGES ||
+                      !Number.isFinite(nextDepth) ||
+                      nextDepth < 0 ||
+                      nextDepth > HARD_MAX_DEPTH
+                    }
+                  >
+                    상한을 올려 이어서 크롤
+                  </button>
+                </div>
+              </form>
+            )}
           <div className="btn-row">
             <a className="btn" href={`/api/jobs/${jobId}/zip`}>
               ZIP 다운로드

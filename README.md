@@ -152,7 +152,8 @@ payment/            # optional
 ## 주의
 
 - 동일 registrable site / origin 범위만 수집합니다.  
-- `maxPages` 상한 5000, `maxDepth` 상한 12. 이미 시작된 작업에는 소급되지 않습니다.
+- `maxPages` 상한 5000, `maxDepth` 상한 12. 진행 중인 작업의 상한은 도중에 바뀌지 않습니다.
+- 끝난 작업은 해당 페이지에서 상한을 올려 이어서 받습니다. 이미 저장한 주소는 다시 받지 않습니다.
 - 결과 파일: `data/jobs/<jobId>/`. 홈의 **지난 크롤**에서 다시 엽니다.
 - 로그인·CAPTCHA·의도적 우회는 지원하지 않습니다.  
 - 대상 사이트 이용약관과 robots.txt를 지키세요.  

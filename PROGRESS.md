@@ -11,6 +11,7 @@
 - This is an engineering handoff, not legal advice.
 - Removed the Unsin preset from the home screen. One-click now sends the page-count and depth fields (default 30 / 2, hard cap 200 / 6).
 - Raised the hard cap to 5000 pages and depth 12. Sitemap seeds follow child sitemaps up to that page cap. Home lists past jobs from `data/jobs/<id>`. A running job keeps the limit it started with.
+- A finished job can continue from its own page. Raising the cap queues the same job id, keeps saved pages, and fetches only new URLs. An in-flight job still cannot be extended until it finishes or fails.
 
 ## 2026-08-09
 

@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { CheerioCrawler, Configuration, PlaywrightCrawler, RequestQueue } from "crawlee";
 import { chromium } from "playwright";
 import {
@@ -11,7 +13,9 @@ import {
 import { writeAiBrief } from "../lib/ai-brief";
 import {
   jobDir,
+  readExtract,
   readJob,
+  readPages,
   saveArchiveIndex,
   saveBenchmarkRecipe,
   saveExtract,
@@ -74,19 +78,32 @@ export async function runCrawlJob(jobId: string): Promise<void> {
   if (!meta) throw new Error(`Job not found: ${jobId}`);
 
   const started = Date.now();
+  const resume = !!meta.resume;
+  const pages: PageStructure[] = resume ? await readPages(jobId) : [];
+  const extracts: ExtractedPage[] = resume ? await readExtract(jobId) : [];
+  const resumedCount = pages.length;
+  const seen = new Set<string>();
+  for (const page of pages) {
+    const key = normalizeUrl(page.url) || page.url;
+    seen.add(key);
+    if (page.finalUrl) seen.add(normalizeUrl(page.finalUrl) || page.finalUrl);
+  }
+
   await updateJob(jobId, {
     status: "running",
-    progress: { message: "Starting crawl", pagesCrawled: 0, pagesEnqueued: 1 },
+    resume: false,
+    progress: {
+      message: resume ? `Continuing from ${resumedCount} pages` : "Starting crawl",
+      pagesCrawled: resumedCount,
+      pagesEnqueued: Math.max(resumedCount, 1),
+    },
   });
 
   // Always save reproducible plan (thin "recipe" — Browser Use idea without LLM)
   await saveBenchmarkRecipe(jobId, meta.input);
 
-  const pages: PageStructure[] = [];
-  const extracts: ExtractedPage[] = [];
   const mdEntries: { url: string; title?: string; file: string }[] = [];
   const shotEntries: { url: string; title?: string; file: string }[] = [];
-  const seen = new Set<string>();
   const { input } = meta;
   const startUrl = normalizeUrl(input.startUrl) || input.startUrl;
   const maxPages = input.limits.maxPages;
@@ -184,23 +201,51 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     if (doExtract) await saveExtract(jobId, extracts);
   };
 
+  const resumeSeeds = resume
+    ? frontierFromSaved(pages, startUrl, scope, seen, maxDepth)
+    : [];
+  const requestBudget = Math.max(1, maxPages - resumedCount);
+
   try {
     if (input.siteType === "static") {
-      await runCheerioCrawl(meta, startUrl, maxPages, maxDepth, scope, recordPage, pages);
+      await runCheerioCrawl(
+        meta,
+        startUrl,
+        maxPages,
+        maxDepth,
+        scope,
+        recordPage,
+        pages,
+        seen,
+        resumeSeeds,
+        requestBudget,
+      );
     } else {
-      await runPlaywrightCrawl(meta, startUrl, maxPages, maxDepth, scope, recordPage, pages);
+      await runPlaywrightCrawl(
+        meta,
+        startUrl,
+        maxPages,
+        maxDepth,
+        scope,
+        recordPage,
+        pages,
+        seen,
+        resumeSeeds,
+        requestBudget,
+      );
     }
 
     // Static crawls cannot screenshot in-handler — second pass with Playwright
-    if (input.features.screenshot && input.siteType === "static" && pages.length) {
+    const needShots = pages.filter((page) => !page.screenshotFile);
+    if (input.features.screenshot && input.siteType === "static" && needShots.length) {
       await updateJob(jobId, {
         progress: {
           pagesCrawled: pages.length,
           pagesEnqueued: seen.size,
-          message: `Screenshots 0/${pages.length}`,
+          message: `Screenshots 0/${needShots.length}`,
         },
       });
-      await screenshotUrls(jobId, pages, (done, total, url) => {
+      await screenshotUrls(jobId, needShots, (done, total, url) => {
         void updateJob(jobId, {
           progress: {
             pagesCrawled: pages.length,
@@ -218,12 +263,18 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     await savePages(jobId, pages);
     if (doExtract) await saveExtract(jobId, extracts);
 
-    if (mdEntries.length) await saveMarkdownIndex(jobId, mdEntries);
-    if (shotEntries.length) await saveScreenshotIndex(jobId, shotEntries);
+    const markdownIndex = pages
+      .filter((page) => page.markdownFile)
+      .map((page) => ({ url: page.url, title: page.title, file: page.markdownFile! }));
+    const screenshotIndex = pages
+      .filter((page) => page.screenshotFile)
+      .map((page) => ({ url: page.url, title: page.title, file: page.screenshotFile! }));
+    if (markdownIndex.length) await saveMarkdownIndex(jobId, markdownIndex);
+    if (screenshotIndex.length) await saveScreenshotIndex(jobId, screenshotIndex);
 
     let paymentOk = 0;
     let paymentFail = 0;
-    if (input.features.paymentCapture) {
+    if (input.features.paymentCapture && resumedCount === 0) {
       const detailUrls = pages.map((p) => p.url).filter(isProductDetailUrl);
       for (const row of extracts) {
         if (isProductDetailUrl(row.url)) detailUrls.push(row.url);
@@ -259,7 +310,14 @@ export async function runCrawlJob(jobId: string): Promise<void> {
     // keep count on a local var set by seed helper
     sitemapSeedCount = (meta as JobMeta & { _seedCount?: number })._seedCount ?? 0;
 
-    const mirror = await mirrorDesign(jobId, input.features.wgetMirror, pages, seen.size);
+    let mirror = await mirrorDesign(
+      jobId,
+      input.features.wgetMirror,
+      pages.slice(resumedCount),
+      seen.size,
+      pages.length,
+    );
+    if (!mirror) mirror = await readMirrorReport(jobId);
     let aiBrief = false;
     try {
       await writeAiBrief(jobDir(jobId), {
@@ -283,8 +341,8 @@ export async function runCrawlJob(jobId: string): Promise<void> {
       durationMs: Date.now() - started,
       paymentCaptured: paymentOk,
       paymentFailed: paymentFail,
-      markdownCount: mdEntries.length,
-      screenshotCount: shotEntries.length,
+      markdownCount: markdownIndex.length,
+      screenshotCount: screenshotIndex.length,
       sitemapSeedCount,
       mirrorFiles: mirror?.files,
       mirrorBytes: mirror?.bytes,
@@ -358,16 +416,29 @@ export async function runCrawlJob(jobId: string): Promise<void> {
   }
 }
 
+async function readMirrorReport(jobId: string): Promise<MirrorReport | undefined> {
+  try {
+    const raw = await fs.readFile(
+      path.join(jobDir(jobId), "reference", "mirror", "report.json"),
+      "utf8",
+    );
+    return JSON.parse(raw) as MirrorReport;
+  } catch {
+    return undefined;
+  }
+}
+
 async function mirrorDesign(
   jobId: string,
   enabled: boolean | undefined,
   pages: PageStructure[],
   enqueued: number,
+  pagesCrawled = pages.length,
 ): Promise<MirrorReport | undefined> {
   if (!enabled || !pages.length) return undefined;
   await updateJob(jobId, {
     progress: {
-      pagesCrawled: pages.length,
+      pagesCrawled,
       pagesEnqueued: enqueued,
       message: "Mirroring design files (wget)",
     },
@@ -448,24 +519,66 @@ function collectEnqueueUrls(
   return discoverLinks(html, pageUrl, startUrl, scope);
 }
 
+function frontierFromSaved(
+  saved: PageStructure[],
+  startUrl: string,
+  scope: CrawlScope,
+  seen: Set<string>,
+  maxDepth: number,
+): { url: string; depth: number }[] {
+  const out: { url: string; depth: number }[] = [];
+  const queued = new Set<string>();
+  for (const page of saved) {
+    if (page.depth >= maxDepth) continue;
+    const nextDepth = page.depth + 1;
+    for (const link of [...page.internalLinks, ...page.externalLinks]) {
+      const url = normalizeUrl(link.href) || link.href;
+      if (!url || seen.has(url) || queued.has(url)) continue;
+      if (!isInScope(startUrl, url, scope) || shouldSkipUrl(url)) continue;
+      queued.add(url);
+      out.push({ url, depth: nextDepth });
+      if (out.length >= 8000) return out;
+    }
+  }
+  return out;
+}
+
 async function seedQueue(
   meta: JobMeta,
   requestQueue: RequestQueue,
   startUrl: string,
   maxPages: number,
   scope: CrawlScope,
+  skip: Set<string>,
+  extraSeeds: { url: string; depth: number }[],
+  pagesCrawled: number,
 ): Promise<number> {
-  await requestQueue.addRequest({
-    url: startUrl,
-    userData: { depth: 0 } satisfies UserData,
-  });
+  const queued = new Set<string>();
+  const enqueue = async (url: string, depth: number) => {
+    const key = normalizeUrl(url) || url;
+    if (!key || skip.has(key) || queued.has(key)) return;
+    if (!isInScope(startUrl, key, scope) || shouldSkipUrl(key)) return;
+    queued.add(key);
+    await requestQueue.addRequest({
+      url: key,
+      userData: { depth } satisfies UserData,
+    });
+  };
 
-  if (!meta.input.features.sitemapSeed) return 0;
+  await enqueue(startUrl, 0);
+  for (const seed of extraSeeds) {
+    await enqueue(seed.url, seed.depth);
+  }
+
+  if (!meta.input.features.sitemapSeed) {
+    (meta as JobMeta & { _seedCount?: number })._seedCount = 0;
+    return 0;
+  }
 
   await updateJob(meta.id, {
     progress: {
-      pagesCrawled: 0,
-      pagesEnqueued: 1,
+      pagesCrawled,
+      pagesEnqueued: pagesCrawled + queued.size,
       message: "Fetching sitemap.xml seeds…",
     },
   });
@@ -473,17 +586,10 @@ async function seedQueue(
   const seeds = await fetchSitemapSeedUrls(startUrl, scope, maxPages);
   let added = 0;
   for (const url of seeds) {
-    if (url === startUrl) continue;
-    await requestQueue.addRequest(
-      {
-        url,
-        userData: { depth: 0 } satisfies UserData,
-      },
-      { forefront: false },
-    );
-    added += 1;
+    const before = queued.size;
+    await enqueue(url, 0);
+    if (queued.size > before) added += 1;
   }
-  // stash for summary
   (meta as JobMeta & { _seedCount?: number })._seedCount = added;
   return added;
 }
@@ -506,15 +612,27 @@ async function runCheerioCrawl(
     },
   ) => Promise<void>,
   pages: PageStructure[],
+  seen: Set<string>,
+  extraSeeds: { url: string; depth: number }[],
+  requestBudget: number,
 ) {
   const config = crawleeConfig();
   const requestQueue = await RequestQueue.open(`job-${meta.id}-q`, { config });
-  const seedCount = await seedQueue(meta, requestQueue, startUrl, maxPages, scope);
+  const seedCount = await seedQueue(
+    meta,
+    requestQueue,
+    startUrl,
+    maxPages,
+    scope,
+    seen,
+    extraSeeds,
+    pages.length,
+  );
   if (seedCount) {
     await updateJob(meta.id, {
       progress: {
-        pagesCrawled: 0,
-        pagesEnqueued: seedCount + 1,
+        pagesCrawled: pages.length,
+        pagesEnqueued: Math.max(pages.length, seedCount),
         message: `Sitemap seeds +${seedCount}`,
       },
     });
@@ -523,7 +641,7 @@ async function runCheerioCrawl(
   const crawler = new CheerioCrawler(
     {
       requestQueue,
-      maxRequestsPerCrawl: maxPages,
+      maxRequestsPerCrawl: requestBudget,
       maxConcurrency: concurrencyOf(meta, 5),
       requestHandlerTimeoutSecs: 60,
       async requestHandler({ request, body, response }) {
@@ -544,7 +662,10 @@ async function runCheerioCrawl(
         if (depth >= maxDepth || pages.length >= maxPages) return;
 
         const links = collectEnqueueUrls(meta, html, url, startUrl, scope, depth)
-          .filter((href) => isInScope(startUrl, href, scope) && !shouldSkipUrl(href))
+          .filter((href) => {
+            const key = normalizeUrl(href) || href;
+            return !seen.has(key) && isInScope(startUrl, href, scope) && !shouldSkipUrl(href);
+          })
           .slice(0, 120);
 
         for (const href of links) {
@@ -585,15 +706,27 @@ async function runPlaywrightCrawl(
     },
   ) => Promise<void>,
   pages: PageStructure[],
+  seen: Set<string>,
+  extraSeeds: { url: string; depth: number }[],
+  requestBudget: number,
 ) {
   const config = crawleeConfig();
   const requestQueue = await RequestQueue.open(`job-${meta.id}-pw`, { config });
-  const seedCount = await seedQueue(meta, requestQueue, startUrl, maxPages, scope);
+  const seedCount = await seedQueue(
+    meta,
+    requestQueue,
+    startUrl,
+    maxPages,
+    scope,
+    seen,
+    extraSeeds,
+    pages.length,
+  );
   if (seedCount) {
     await updateJob(meta.id, {
       progress: {
-        pagesCrawled: 0,
-        pagesEnqueued: seedCount + 1,
+        pagesCrawled: pages.length,
+        pagesEnqueued: Math.max(pages.length, seedCount),
         message: `Sitemap seeds +${seedCount}`,
       },
     });
@@ -604,7 +737,7 @@ async function runPlaywrightCrawl(
   const crawler = new PlaywrightCrawler(
     {
       requestQueue,
-      maxRequestsPerCrawl: maxPages,
+      maxRequestsPerCrawl: requestBudget,
       maxConcurrency: concurrencyOf(meta, 2),
       requestHandlerTimeoutSecs: 90,
       headless: true,
@@ -658,7 +791,10 @@ async function runPlaywrightCrawl(
           scope,
           depth,
         )
-          .filter((href) => isInScope(startUrl, href, scope) && !shouldSkipUrl(href))
+          .filter((href) => {
+            const key = normalizeUrl(href) || href;
+            return !seen.has(key) && isInScope(startUrl, href, scope) && !shouldSkipUrl(href);
+          })
           .slice(0, 100);
 
         for (const href of links) {

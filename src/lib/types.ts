@@ -103,6 +103,8 @@ export type JobMeta = {
   createdAt: string;
   updatedAt: string;
   status: JobStatus;
+  /** When true, the next worker keeps saved pages and fetches only new URLs. */
+  resume?: boolean;
   error?: string;
   input: Required<
     Pick<CreateJobInput, "startUrl" | "siteType" | "features">
