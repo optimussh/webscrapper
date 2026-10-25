@@ -1,5 +1,8 @@
 # PROGRESS — webscrapper
 
+## 2026-10-25 — Security patch: Next.js 15.5.28 · React 19.3.1
+- 2026년 10월 Next.js/React 긴급 보안 권고(CVE-2026-96889, GHSA-p3m5-59mp-jv5r) 대응으로 `next` `^15.5.28`, `react`/`react-dom` `^19.3.1` 버전 상향
+
 ## 2026-10-03
 
 ### Sitemap cycle fix & auto-finalization recovery
